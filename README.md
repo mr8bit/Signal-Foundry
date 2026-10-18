@@ -111,7 +111,7 @@ Categories include Overall, Models, GitHub, Research papers, Publications, Cloud
 | Day | 24 hours | Editorial score, up to 100, including freshness |
 | Week / Month / Year | 7 / 30 / 365 days | Significance, up to 75: editorial score without freshness |
 
-Periods use `news_at`: publication time for stories, creation/publication for HF models and papers, first archived appearance for GitHub Trending, and the supplied update date for Hype models. A merged story uses its earliest report. Reading an old model from a trend list again does not make it news of the day. Old dashboard links using `sort=now` open Trending Now; the API retains `now` as a legacy 48-hour default.
+Periods use `news_at`: publication time for stories, creation/publication for HF models and papers, and first archived appearance for GitHub Trending. A merged story uses its earliest report. Reading an old model from a trend list again does not make it news of the day. Old dashboard links using `sort=now` open Trending Now; the API retains `now` as a legacy 48-hour default.
 
 Platform sorting is available outside Trending Now: GitHub daily stars, HF trendingScore followed by likes when trendingScore is missing, and paper upvotes. These metric groups are not mixed. The selected period filters entries without changing the measurement window. In Day, GitHub/HF columns retain provider order; other periods use their own ranking measure.
 
@@ -127,7 +127,7 @@ Platform sorting is available outside Trending Now: GitHub daily stars, HF trend
 
 A release headline naming a tracked model family, or that family in model trends, receives 30 relevance points. Other trending models, and quants, merges or uncensored fine-tunes of a tracked family (GGUF, AWQ, GPTQ, EXL2/3, MLX, abliterated, imatrix, LoRA…), receive 18. Enterprise uses its own evidence weights: 30 for a headline cue, 24 for adoption reported by a publication, 18 for a vendor customer story or body-only evidence, and 12 for further stories in the same vendor series after a full-weight story within seven days. Stories stay visible when their weight is reduced.
 
-Freshness half-lives: news and repositories 24 hours, papers 72 hours, models 168 hours; a reported update (Hype) 24 hours, since an update is not a release. HF models use `createdAt`, papers their publication date, and GitHub Trending its first archived observation. Hype model dates represent the reported update.
+Freshness half-lives: news and repositories 24 hours, papers 72 hours, models 168 hours. HF models use `createdAt`, papers their publication date, and GitHub Trending its first archived observation.
 
 ### Attention
 
@@ -149,7 +149,7 @@ Trending Now ranks by faded momentum: momentum × 2^(−age / 24 h), where age c
 
 Community threads about a story that has its own card (related coverage of a lab post, news report, model or repository) are its discussion rather than separate news: "DeepSeek V4.1 Flash 1017 - GTA6 trailer" belongs to the release. In Trending Now such threads are hidden and the story's card is shown while any of them is from the last 24 hours, even when the card itself is older, at the highest faded momentum of the card and those threads; the card lists them under **Discussed in** (`threads` in the API). The card is the official post, then a news report, then the model or repository, then a newsletter. Other periods list threads as they are.
 
-A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
+A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Coverage does not verify claims or imply independent fact-checking.
 
 Growth per day is measured only from stored readings at least six hours apart within 48 hours; a single snapshot never claims a rate. Daily GitHub stars from Trending are used as supplied. Descriptions are source excerpts or metadata, not AI-written summaries. Historical coverage depends on how long the archive has been collecting.
 
@@ -182,7 +182,7 @@ Primary: r/LocalLLaMA, r/LocalLLM, r/MachineLearningNews, r/unsloth, r/MachineLe
 - Industry-drama cues are allowed only for r/LocalLLaMA and r/singularity.
 - Priority: open-weight releases with measurements, local inference with numbers, agent/local tools with repositories, research, then other news.
 
-**RSS limitation:** Reddit RSS does not provide scores or reliable flairs, sticky or removal flags. Configured vote thresholds of 30/100/300 and LocalLLaMA flairs cannot be verified for RSS. Reading top is not a guarantee of a vote threshold. The values remain for JSON fixtures and sources that supply scores. Hype Reddit entries use those rules; LocalLLaMA entries without a verifiable flair are rejected.
+**RSS limitation:** Reddit RSS does not provide scores or reliable flairs, sticky or removal flags. Configured vote thresholds of 30/100/300 and LocalLLaMA flairs cannot be verified for RSS. Reading top is not a guarantee of a vote threshold. The values remain for JSON fixtures and sources that supply scores.
 
 Each combined RSS group requests up to 100 entries with no pagination. Large communities can crowd out smaller ones; split groups if needed. Weekend top/week plus the age cutoff approximates a 48-hour selection within the returned entries.
 
@@ -203,9 +203,8 @@ TechCrunch can fetch article paragraphs after an entry passes filters. Navigatio
 | GitHub Trending | Repository, description, language, daily/lifetime stars and forks | `https://github.com/trending?since=daily` |
 | HF Models | Model metadata, task, library, license, likes and monthly downloads | `/api/models?sort=trendingScore&limit=30&full=true&cardData=true` |
 | HF Papers | Original abstract, upvotes, comments, arXiv and GitHub links | `/api/daily_papers?sort=trending&limit=30` |
-| Replicate Hype | GitHub, HF and Replicate model/repository discovery, eligible Reddit posts | Public `/api/posts` JSON, weekly window |
 
-No API keys are needed for these adapters. Repositories require AI keywords; models and papers pass general exclusions without additional AI keywords. HF Papers' `ai_summary` is not presented as an author abstract. Zero metrics stay zero; missing ones stay absent. Hype's overloaded `stars` field is normalized into total stars, likes, runs or upvotes, and its model dates are labeled **updated**.
+No API keys are needed for these adapters. Repositories require AI keywords; models and papers pass general exclusions without additional AI keywords. HF Papers' `ai_summary` is not presented as an author abstract. Zero metrics stay zero; missing ones stay absent.
 
 ### Cloud AI
 
@@ -213,7 +212,7 @@ Twelve feeds cover Google Cloud AI, Gemini Enterprise and Vertex AI release note
 
 Third-party model availability on Bedrock, Vertex, Foundry or AI Gateway becomes an **Available on** link on the matching model story. Standalone cloud stories require first-party models, agent platforms, a quantified price reduction of at least 20%, or new AI hardware. Customer stories, tutorials, webinars, new regions, GovCloud and compliance announcements are excluded. Source-specific gates include GA-only Gemini Enterprise notes, Launched Azure updates, and stable `ai@N.0.0` SDK majors. Unmatched availability announcements remain pending instead of becoming separate stories. Existing Telegram messages are not edited automatically.
 
-Detailed implementation notes: [cloud](CLOUD_NEWS.md), [Hype](REPLICATE_HYPE.md), [ranking](SIGNAL_RANKING.md), [collection](COLLECTION.md) and [source diagnostics](SOURCE_STATUS.md).
+Detailed implementation notes: [cloud](CLOUD_NEWS.md), [ranking](SIGNAL_RANKING.md), [collection](COLLECTION.md) and [source diagnostics](SOURCE_STATUS.md).
 
 ## Collection, caching and failures
 
@@ -317,7 +316,7 @@ For published-image deployments, operations must use the release override too:
 ```sh
 docker compose -f compose.yaml -f compose.release.yaml --profile ops run --rm --no-deps backup
 docker compose exec worker python source_diagnostics.py
-docker compose exec worker python source_diagnostics.py --probe --source 'Replicate Hype'
+docker compose exec worker python source_diagnostics.py --probe --source 'GitHub Trending'
 ```
 
 A probe respects TTL and cooldown. Readiness requires a recent collector heartbeat and a publication younger than `SIGNAL_READY_MAX_AGE` (default two hours). Monitor stale publications, collection failures and per-source status separately.

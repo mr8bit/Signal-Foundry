@@ -10,9 +10,9 @@ CFG=json.loads(Path('config.json').read_text())
 NOW=datetime(2026,10,18,12,tzinfo=timezone.utc).timestamp()
 
 
-def hype_repo(stars,**changes):
-    p=dict(id='h',source='site',source_id='replicate_hype',source_name='Replicate Hype',category='repository',
-           content_kind='repository',hype_origin='github',title='owner/tool',url='https://github.com/Owner/Tool',
+def trending_repo(stars,**changes):
+    p=dict(id='h',source='site',source_id='github_trending',source_name='GitHub Trending',category='repository',
+           content_kind='repository',title='owner/tool',url='https://github.com/Owner/Tool',
            article_url='https://github.com/Owner/Tool',selftext='',links=[],created_utc=NOW-3600,feed_rank=0,
            metrics=[dict(kind='stars',value=stars,label='total stars')])
     p.update(changes);return p
@@ -35,8 +35,8 @@ class Attention(unittest.TestCase):
     def tearDown(self):self.tmp.cleanup()
 
     def test_totals_become_growth_per_day_from_stored_readings(self):
-        self.store.record(attention.passive([hype_repo(1000)]),NOW-12*3600)
-        self.store.record(attention.passive([hype_repo(1500)]),NOW)
+        self.store.record(attention.passive([trending_repo(1000)]),NOW-12*3600)
+        self.store.record(attention.passive([trending_repo(1500)]),NOW)
         readings=self.store.snapshot(NOW)['github.com/owner/tool']
         self.assertEqual(readings['github_stars'],1500);self.assertAlmostEqual(readings['github_stars_day'],1000)
         # Readings closer than six hours apart do not claim a rate.
@@ -44,7 +44,7 @@ class Attention(unittest.TestCase):
         self.assertNotIn('github_stars_day',self.store.snapshot(NOW)['github.com/a/b'])
 
     def test_passive_readings_cover_feed_comments_and_hn_discussion(self):
-        article=dict(hype_repo(0),source_id='ars',content_kind=None,hype_origin=None,url='https://www.arstechnica.com/ai/story/',
+        article=dict(trending_repo(0),source_id='ars',content_kind=None,url='https://www.arstechnica.com/ai/story/',
                      article_url='https://www.arstechnica.com/ai/story/',metrics=[dict(kind='comments',value=132,label='comments')])
         hn=dict(article,source_id='hn',metrics=[],selftext='Article URL: https://arstechnica.com/ai/story\nPoints: 233\nComments: 75',
                 links=['https://news.ycombinator.com/item?id=1'])
@@ -79,14 +79,15 @@ class Attention(unittest.TestCase):
         with self.assertRaises(RuntimeError):attention.parse_most_read(b'<h2>Latest</h2><ul><li><a href="/a">a</a></li></ul>','https://x.com/')
 
     def test_refresh_spends_budget_on_lookups_and_respects_ttl(self):
-        article=dict(hype_repo(0),source_id='techcrunch',category='news',content_kind=None,hype_origin=None,metrics=[],
+        article=dict(trending_repo(0),source_id='techcrunch',category='news',content_kind=None,metrics=[],
                      title='DeepSeek releases V4.1 Flash with faster agents',url='https://techcrunch.com/2026/10/17/deepseek/',
                      article_url='https://techcrunch.com/2026/10/17/deepseek/')
         http=FakeHTTP({'https://hn.algolia.com/':json.dumps({'hits':[{'url':'https://techcrunch.com/2026/10/17/deepseek','points':321,'num_comments':40}]}).encode(),
                        'https://news.google.com/':b'<rss><channel><item><title>DeepSeek releases V4.1 Flash with faster agents - Reuters</title><source>Reuters</source></item></channel></rss>',
                        'https://api.github.com/':json.dumps({'stargazers_count':4200}).encode()})
         cfg=dict(CFG,attention=dict(CFG.get('attention',{}),most_read={}))
-        result=attention.refresh([article,hype_repo(4000)],cfg,NOW,store=self.store,http=http)
+        # A repository linked from elsewhere is looked up; GitHub Trending already carries its stars.
+        result=attention.refresh([article,trending_repo(4000,source_id='simon',source_name='Simon Willison')],cfg,NOW,store=self.store,http=http)
         readings=self.store.snapshot(NOW)
         self.assertEqual(readings['techcrunch.com/2026/10/17/deepseek']['hn_points'],321)
         self.assertEqual(readings['techcrunch.com/2026/10/17/deepseek']['news_outlets'],1)
@@ -103,7 +104,7 @@ class Attention(unittest.TestCase):
         self.assertEqual(len(http.urls),calls+2)
 
     def test_attention_combines_families_without_double_counting(self):
-        repo=hype_repo(5000)
+        repo=trending_repo(5000)
         parts=lambda readings:next(c for c in signals.score(repo,[repo],NOW,CFG,readings=readings)[1] if c['id']=='attention')
         self.assertEqual(parts({})['points'],0)
         growth=parts({'github.com/owner/tool':{'github_stars_day':1000}})

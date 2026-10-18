@@ -278,8 +278,8 @@ class Signals(unittest.TestCase):
     def test_fine_tunes_get_no_coverage_from_base_model_news(self):
         news=post(id='r',title='Qwen3.8 Flash Next is amazing for local use',
                   selftext='',links=[],article_url='https://localllm.example/1')
-        model=lambda id,repo:post(id=id,title=repo,source_id='replicate_hype',category='model',content_kind='model',
-                                  date_kind='updated',filter_mode='all',url='https://huggingface.co/'+repo,
+        model=lambda id,repo:post(id=id,title=repo,source_id='hf_models',category='model',content_kind='model',
+                                  date_kind='trend',filter_mode='all',url='https://huggingface.co/'+repo,
                                   article_url='https://huggingface.co/'+repo,selftext='',links=[])
         tune=model('d','DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GGUF')
         base=model('q','Qwen/Qwen3.8-Flash-Next')
@@ -404,6 +404,16 @@ class Signals(unittest.TestCase):
                                                                                      dict(id='freshness',points=10)])
         [shared]=signals.share_attention([row(4.3,40)],[row(25,60.7)])
         self.assertEqual((shared['score'],shared['components'][0]['momentum']),(60.7,25))
+
+    def test_official_posts_rank_at_least_as_tools_and_launches_higher(self):
+        lab=lambda title,**extra:post(**dict(title=title,source_id='openai',source_name='OpenAI News',category='lab',filter_mode='all',
+                                            selftext='',links=[])|extra)
+        relevance=lambda p:signals.editorial_basis(p,[p],CFG)[0]['relevance']
+        self.assertEqual(relevance(lab('Introducing dots')),24)
+        self.assertEqual(relevance(lab('Our approach to frontier risk')),18)
+        # Tutorials keep the ladder; a news report about the lab is not the lab's own post.
+        self.assertEqual(relevance(lab('How to build an agent with the Responses API')),6)
+        self.assertEqual(relevance(lab('Introducing dots',source_id='techcrunch',source_name='TechCrunch AI',category='news')),6)
 
     def test_shared_keys_merge_articles_only_within_days(self):
         issue=lambda id,days:post(id=id,title='[AINews] not much happened today',source_id='latent',source_name='Latent Space',

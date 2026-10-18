@@ -247,7 +247,7 @@ def markdown(data,period=DEFAULT_PERIOD,category='all',limit=DEFAULT_LIMIT,now=N
          f'category={"|".join(CATEGORIES)}, limit=1..{MAX_LIMIT}.','',
          'The 0–100 editorial score combines relevance, freshness, evidence, primary sources and attention. '
          'It does not verify claims.','',f'## {CATEGORIES[category]}','']
-    out+=[PERIOD_NOTES[period]+' Periods use the story date: publication, model or paper creation, first appearance in trends, or the model update date supplied by Hype.','']
+    out+=[PERIOD_NOTES[period]+' Periods use the story date: publication, model or paper creation, or first appearance in trends.','']
     out+= [md_item(i,p,order) for i,p in enumerate(rows[:limit],1)] or ['No stories in this period.']
     if category=='all':
         for key in [k for k in CATEGORIES if k!='all']:
@@ -284,7 +284,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
 - Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`, 24 hours) orders by momentum halved per day of age (momentum × 2^(−age/24 h)), and admits models on the Hugging Face trend list created within seven days: momentum is attention, or for a story with no signal its editorial weight percentile (at most 10). Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 24 hours, at the highest faded momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
-- Periods use the story date. Hype model dates represent updates, not original model creation.
+- Periods use the story date: publication, model or paper creation, or first appearance in trends.
 '''
 
 

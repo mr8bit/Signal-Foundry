@@ -266,6 +266,10 @@ MEASURE=r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)'
 SIZE_CUE=r'|(?<![$\w])\d+(?:\.\d+)?B\b|(?:Parameters|Параметров):\s*\d'
 
 
+OFFICIAL_LAUNCH=re.compile(r'^(?:introducing|announcing|meet|welcome)\b|\b(?:launch(?:es|ed|ing)?|unveil\w*|now available|'
+                           r'generally available|rolls? out|rolling out|releas(?:e|es|ed|ing))\b',re.I)
+
+
 def editorial_basis(p,members,cfg=None):
     """Relevance, evidence and primary-source points with the flags behind them: a story's weight before timing and reach."""
     priority_=priority(p,cfg)
@@ -279,6 +283,12 @@ def editorial_basis(p,members,cfg=None):
     unknown_model=p.get('content_kind')=='model' and (not bot.matches(p['title'],(cfg or {}).get('models',[])) or bool(DERIVATIVE.search(p['title'])))
     values=dict(relevance=18 if unknown_model else (6-priority_)*6,evidence=7*measured+5*repository+3*research,
                 primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0)
+    # The ladder is built for open models, so a lab's or cloud's own post ("Introducing dots") fell to Industry (6 of 30)
+    # below any trending repository. An official post counts at least as Tools, an official launch as Local inference;
+    # tutorials keep the ladder.
+    official=[m for m in members if m.get('category') in ('lab','cloud') and not bot.TUTORIAL.search(m['title'])]
+    if official and not artifact:
+        values['relevance']=max(values['relevance'],24 if any(OFFICIAL_LAUNCH.search(m['title']) for m in official) else 18)
     return values,dict(priority=priority_,measured=measured,repository=repository,unknown_model=unknown_model)
 
 
@@ -362,7 +372,7 @@ def momentum_proxy(weight,baseline):
 def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseline=None, readings=None):
     stamp,stamp_kind=reference_time(p)
     age=max(0,(now-stamp)/3600)
-    # A reported update (Hype) is not a release: it fades like news, not like a new model.
+    # A reported update is not a release: it fades like news, not like a new model.
     half_life=24 if p.get('date_kind')=='updated' else HALF_LIFE.get(p.get('content_kind'),24)
     basis,flags=editorial_basis(p,members,cfg)
     priority_,measured,repository,unknown_model=flags['priority'],flags['measured'],flags['repository'],flags['unknown_model']
@@ -770,7 +780,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
         signal_categories,signal_metrics=ranking_metadata(members)
         result.append(dict(id=sha256(stable.encode()).hexdigest()[:20],title=p['title'],
             summary=summary,
-            description_kind=('Description from Replicate Hype' if p.get('hype_origin') else 'Model metadata' if p.get('content_kind')=='model' else 'Paper abstract' if p.get('content_kind')=='paper' else 'Repository description' if p.get('content_kind')=='repository' else 'Article excerpt' if p.get('article_text') else 'Feed description'),
+            description_kind=('Model metadata' if p.get('content_kind')=='model' else 'Paper abstract' if p.get('content_kind')=='paper' else 'Repository description' if p.get('content_kind')=='repository' else 'Article excerpt' if p.get('article_text') else 'Feed description'),
             source_id=sid,source_name=source_name(p),platform=platform,category=category,column=column,
             signal_categories=signal_categories,signal_metrics=signal_metrics,
             cloud_availability=availability_for(members),

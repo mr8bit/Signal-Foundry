@@ -1,6 +1,6 @@
 """Attention readings: every signal of interest in a story, stored over time.
 
-Passive readings are metrics the collected sources already carry (Hype stars and runs, HF likes and
+Passive readings are metrics the collected sources already carry (GitHub Trending stars, HF likes and
 trendingScore, HN points and comments, feed comment counts). Stored as a history they give growth per day.
 Active readings are budgeted lookups: HN discussion of a URL, the HF and GitHub APIs for artifacts, Substack
 reactions, Google News coverage of a headline and outlets' most-read lists.
@@ -140,8 +140,7 @@ def passive(posts):
     for p in posts:
         metric={m.get('kind'):m.get('value') for m in p.get('metrics',[])}
         artifact=artifact_key(p.get('url'))
-        origin=p.get('hype_origin')
-        if artifact and artifact.startswith('github.com/') and (origin=='github' or p.get('source_id')=='github_trending'):
+        if artifact and artifact.startswith('github.com/') and p.get('source_id')=='github_trending':
             rows.append((artifact,'github_stars',metric.get('stars')))
         if artifact and artifact.startswith('huggingface.co/') and p.get('content_kind')=='model':
             rows.append((artifact,'hf_likes',metric.get('likes')))

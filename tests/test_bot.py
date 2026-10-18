@@ -47,6 +47,14 @@ class Rules(unittest.TestCase):
         self.assertFalse(bot.matches('dramatic capital landscape', ['AMA', 'API', 'MCP']))
         self.assertTrue(bot.matches('Qwen3 and GPT-5 agents', ['Qwen']))
 
+    def test_on_topic_community_titles_pass_the_keyword_filter(self):
+        # RSS posts carry no score or flair; only the words decide.
+        rss=lambda title:post(title=title,source='rss',score=None,link_flair_text=None)
+        for title in ('AuroraASR-1M Releases!','Google Open Sources Harness2 for Self Improving AI Agents',
+                      'Update: Converting dense models into Mixture-of-Experts','What quant do you actually use day to day?'):
+            self.assertIsNone(bot.reject(rss(title),CFG,NOW),title)
+        self.assertEqual(bot.reject(rss('Show me your rack'),CFG,NOW),'no keyword')
+
     def test_dedup_highest_and_transitive(self):
         a = post(id='a', url='https://huggingface.co/a/model?download=true', selftext='', score=400)
         b = post(id='b', url='https://github.com/org/repo/tree/main', selftext='', score=450)
