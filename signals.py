@@ -218,9 +218,14 @@ def popularity(p,baseline=None):
 
 
 def reference_time(p):
-    """When the story became news: publication for models/papers, first sighting for trending repositories."""
+    """When the story became news: publication for models/papers, first sighting for trending repositories.
+    Some feeds give only a day (Anthropic, the Hugging Face blog, parts of OpenAI and Vercel), which parses as
+    midnight UTC; first seen the same day, the post is dated by that sighting, not up to a day too old."""
     if p.get('date_kind')!='trend':
-        return p['created_utc'],'update' if p.get('date_kind')=='updated' else 'publication'
+        created=p['created_utc']
+        seen=p.get('first_seen')
+        if created%86400==0 and seen is not None and 0<=seen-created<86400:created=seen
+        return created,'update' if p.get('date_kind')=='updated' else 'publication'
     if p.get('content_kind') in HALF_LIFE and p.get('original_published_at'):
         return p['original_published_at'],'paper published' if p['content_kind']=='paper' else 'model created'
     return p.get('first_seen',p['created_utc']),'first seen trending'

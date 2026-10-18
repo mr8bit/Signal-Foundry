@@ -195,6 +195,14 @@ class Signals(unittest.TestCase):
         self.assertGreater(next(x for x in parts if x['id']=='attention')['points'],attention([p]))
         self.assertEqual(next(x for x in parts if x['id']=='primary')['points'],5)
 
+    def test_day_only_dates_use_the_first_sighting_that_day(self):
+        midnight=NOW-NOW%86400
+        dated=lambda created,seen:signals.reference_time(post(created_utc=created,first_seen=seen))[0]
+        self.assertEqual(dated(midnight,midnight+20*3600),midnight+20*3600)
+        # A precise time, or a day-only date first seen on a later day (archive backfill), is kept.
+        self.assertEqual(dated(midnight+60,midnight+20*3600),midnight+60)
+        self.assertEqual(dated(midnight,midnight+30*3600),midnight)
+
     def test_trend_freshness_uses_original_or_first_seen_date(self):
         old_paper=post(content_kind='paper',date_kind='trend',category='paper',original_published_at=NOW-400*86400,created_utc=NOW)
         new_paper=dict(old_paper,original_published_at=NOW-3600)
