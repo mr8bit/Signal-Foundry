@@ -89,8 +89,9 @@ class Store:
             db.executemany('DELETE FROM vectors WHERE digest=?',((d,) for d in stored-wanted.keys()))
         missing=[d for d in wanted if d not in stored]
         added=0
-        for start in range(0,min(len(missing),PER_REFRESH),BATCH):
-            batch=missing[start:start+BATCH]
+        limit=min(len(missing),PER_REFRESH)
+        for start in range(0,limit,BATCH):
+            batch=missing[start:min(start+BATCH,limit)]
             try:vectors=embed([wanted[d] for d in batch],config)
             except Exception as exc:
                 LOG.warning('embeddings_failed added=%s error=%s',added,exc.__class__.__name__);break
