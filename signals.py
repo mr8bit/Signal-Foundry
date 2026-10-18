@@ -13,7 +13,7 @@ COMPONENTS = [('relevance','Relevance',30),('freshness','Freshness',25),
               ('evidence','Evidence',15),('coverage','Cross-platform coverage',15),
               ('primary','Primary source',5),('engagement','Popularity',10)]
 LABELS = {1:'Model release',2:'Local inference',3:'Tools',4:'Research',5:'Industry'}
-SCORING_VERSION='editorial-v4'
+SCORING_VERSION='editorial-v5'
 SIGNAL_CATEGORIES={'model':'models','repository':'repos','paper':'papers','news':'media','cloud':'cloud'}
 RANKING_METRICS={'models':('trending','likes'),'repos':('stars_day',),'papers':('upvotes',)}
 # Strong cues (products, controls, deployment models) count anywhere in the excerpt. The weak cue
@@ -251,15 +251,25 @@ def same_story(a,b):
     return len(shared)>=3 and len(shared)/len(sa|sb)>=0.4
 
 
+# Quants, merges and uncensored fine-tunes of a tracked family are not that family's release.
+DERIVATIVE=re.compile(r'(?:^|[-_./\s])(?:ggufs?|awq|gptq|exl[23]|mlx|abliterated|uncensored|imatrix|quants?|merged?|lora|heretic)(?=$|[-_.\s])',re.I)
+MEASURE=r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)'
+# In an article "27B" or "Parameters: N" is a reported measurement; in a model's own name or metadata it is not.
+SIZE_CUE=r'|(?<![$\w])\d+(?:\.\d+)?B\b|(?:Parameters|Параметров):\s*\d'
+
+
 def editorial_basis(p,members,cfg=None):
     """Relevance, evidence and primary-source points with the flags behind them: a story's weight before timing and reach."""
     priority_=priority(p,cfg)
+    artifact=p.get('content_kind') in ('model','repository')
     text=p['title']+' '+p.get('article_text',p.get('selftext',''))
-    measured=bool(re.search(r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)|(?<![$\w])\d+(?:\.\d+)?B\b|(?:Parameters|Параметров):\s*\d',text,re.I))
-    repository=any(bot.canonical(url) for url in [p.get('url','')]+p.get('links',[]))
+    measured=bool(re.search(MEASURE if artifact else MEASURE+SIZE_CUE,text,re.I))
+    # A model or repository linking to itself is not evidence; a link to another artifact is.
+    own=bot.canonical(p.get('url','')) if artifact else None
+    repository=any(bot.canonical(url) and bot.canonical(url)!=own for url in [p.get('url','')]+p.get('links',[]))
     research=bot.matches(text,['paper','arXiv','research','benchmark'])
-    unknown_model=p.get('content_kind')=='model' and not bot.matches(p['title'],(cfg or {}).get('models',[]))
-    values=dict(relevance=24 if unknown_model else (6-priority_)*6,evidence=7*measured+5*repository+3*research,
+    unknown_model=p.get('content_kind')=='model' and (not bot.matches(p['title'],(cfg or {}).get('models',[])) or bool(DERIVATIVE.search(p['title'])))
+    values=dict(relevance=18 if unknown_model else (6-priority_)*6,evidence=7*measured+5*repository+3*research,
                 primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0)
     return values,dict(priority=priority_,measured=measured,repository=repository,unknown_model=unknown_model)
 
@@ -276,7 +286,8 @@ def momentum_proxy(weight,baseline):
 def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseline=None):
     stamp,stamp_kind=reference_time(p)
     age=max(0,(now-stamp)/3600)
-    half_life=HALF_LIFE.get(p.get('content_kind'),24)
+    # A reported update (Hype) is not a release: it fades like news, not like a new model.
+    half_life=24 if p.get('date_kind')=='updated' else HALF_LIFE.get(p.get('content_kind'),24)
     basis,flags=editorial_basis(p,members,cfg)
     priority_,measured,repository,unknown_model=flags['priority'],flags['measured'],flags['repository'],flags['unknown_model']
     own={publisher(m) for m in members}

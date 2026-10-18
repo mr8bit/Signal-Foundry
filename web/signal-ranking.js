@@ -46,17 +46,19 @@
       if(order==='momentum'||order==='significance'){const d=measure(b,order)-measure(a,order);if(d)return d}
       return editorial(a,b);
     });
-    return order==='momentum'?diversify(sorted):sorted;
+    return MEASURES[order]?diversify(sorted,order):sorted;
   }
-  // Trending Now: past SOURCE_CAP stories of one source, further ones compete for the first SOURCE_WINDOW places
-  // at half their momentum (as in digest.py), so one source cannot fill the top yet weak stories are not promoted.
-  const SOURCE_CAP=3,SOURCE_WINDOW=10,SOURCE_PENALTY=0.5;
-  function diversify(rows){
+  // Every period (as in digest.py): past SOURCE_CAP stories of one source, further ones compete for the first
+  // SOURCE_WINDOW places with a fifth of the measure's scale taken off, so one source cannot fill the top
+  // yet weak stories are not promoted. The platform-metric order is left as it is.
+  const SOURCE_CAP=3,SOURCE_WINDOW=10,SOURCE_PENALTY=0.2;
+  function diversify(rows,order='momentum'){
     const rest=rows.slice(),top=[],counts={},source=item=>item.source_id||item.source_name;
+    const penalty=SOURCE_PENALTY*MEASURES[order].max;
     while(rest.length&&top.length<SOURCE_WINDOW){
       let best=0,bestValue=-Infinity;
       rest.forEach((item,i)=>{
-        const value=momentum(item)*((counts[source(item)]||0)>=SOURCE_CAP?SOURCE_PENALTY:1);
+        const value=measure(item,order)-((counts[source(item)]||0)>=SOURCE_CAP?penalty:0);
         if(value>bestValue){best=i;bestValue=value}
       });
       const [item]=rest.splice(best,1);top.push(item);counts[source(item)]=(counts[source(item)]||0)+1;

@@ -20,7 +20,7 @@ SORTS=['trending','day','week','month','year','now']
 WINDOWS={'trending':(12,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
          'year':(8760,'significance'),'now':(48,'editorial')}
 MEASURES={'momentum':('momentum',25),'editorial':('score',100),'significance':('significance',75)}
-PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum (platform popularity plus coverage, up to 25).',
+PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum (popularity within the story\'s own source plus coverage, up to 25). Articles without a platform metric use the percentile of their editorial weight as popularity.',
               'day':'The leading stories of the last 24 hours by editorial score, including freshness, up to 100.',
               'week':'The most significant stories of the last seven days. Significance excludes freshness, up to 75.',
               'month':'The most significant stories of the last 30 days, excluding freshness, up to 75.',
@@ -55,21 +55,23 @@ def ranked(data,category='all',period=DEFAULT_PERIOD,now=None):
     rows=data['items'] if category=='all' else (data.get('signal_rankings') or {}).get(category,[])
     rows=[p for p in rows if 0<=now-news_time(p)<=hours*3600]
     rows=sorted(rows,key=lambda p:(-measure(p,order),-p['score'],-p['published_at'],str(p['id'])))
-    return diversify(rows) if order=='momentum' else rows
+    return diversify(rows,order)
 
 
-# Trending Now: past SOURCE_CAP stories of one source, further ones from that source compete for the first
-# SOURCE_WINDOW places at half their momentum, so one source cannot fill the top yet weak stories are not promoted.
+# Every period: past SOURCE_CAP stories of one source, further ones from that source compete for the first
+# SOURCE_WINDOW places with a fifth of the measure's scale taken off (5 of 25 momentum, 20 of 100 score,
+# 15 of 75 significance), so one source cannot fill the top yet weak stories are not promoted.
 # Mirrored in web/signal-ranking.js.
-SOURCE_CAP,SOURCE_WINDOW,SOURCE_PENALTY=3,10,0.5
+SOURCE_CAP,SOURCE_WINDOW,SOURCE_PENALTY=3,10,0.2
 
 
-def diversify(rows):
+def diversify(rows,order='momentum'):
     rest,top,counts=list(rows),[],defaultdict(int)
     source=lambda p:p.get('source_id') or p.get('source_name')
+    penalty=SOURCE_PENALTY*MEASURES[order][1]
     while rest and len(top)<SOURCE_WINDOW:
         # max keeps the first of equal values, so ties follow the existing order.
-        best=max(range(len(rest)),key=lambda i:momentum(rest[i])*(SOURCE_PENALTY if counts[source(rest[i])]>=SOURCE_CAP else 1))
+        best=max(range(len(rest)),key=lambda i:measure(rest[i],order)-(penalty if counts[source(rest[i])]>=SOURCE_CAP else 0))
         p=rest.pop(best);top.append(p);counts[source(p)]+=1
     return top+rest
 
@@ -81,6 +83,15 @@ def news_time(p):
 
 def component(p,key):
     return next((c for c in p.get('components',[]) if c['id']==key),{})
+
+
+def momentum_parts(p):
+    """What momentum is made of, so an agent can reproduce it: popularity, its basis and coverage."""
+    engagement=component(p,'engagement')
+    platform=engagement.get('available',True)
+    return dict(popularity=engagement.get('points',0) if platform else engagement.get('momentum_proxy',0),
+                basis='platform metric' if platform else 'editorial weight percentile',
+                coverage=component(p,'coverage').get('points',0),note=engagement.get('explanation',''))
 
 
 def momentum(p):
@@ -127,7 +138,7 @@ def compact(p):
                 reasons=p.get('reasons',[]),summary=p.get('summary',''),
                 metrics=[dict(kind=m['kind'],value=m['value'],label=m['label']) for m in p.get('metrics',[])],
                 score_components={c['id']:(c['points'] if c.get('available',True) else None) for c in p.get('components',[])},
-                momentum=momentum(p),significance=significance(p),news_at=iso(news_time(p)),
+                momentum=momentum(p),momentum_parts=momentum_parts(p),significance=significance(p),news_at=iso(news_time(p)),
                 enterprise_reasons=p.get('enterprise_reasons') or [],
                 also=[dict(source=a['source'],title=a['title'],url=http_url(a.get('url'))) for a in p.get('also',[])],cloud_availability=p.get('cloud_availability',[]))
 
@@ -159,6 +170,9 @@ def md_item(position,p,order='editorial'):
     when=({'trend':'trending since ','updated':'updated '}.get(p.get('date_kind'),'published '))+iso(p['published_at'])
     if p.get('original_published_at'):when+=f'; original date {iso(p["original_published_at"])}'
     lines.append(f'   - Source: {md_text(p.get("source_name"))}; {when}')
+    if order=='momentum':
+        parts=momentum_parts(p)
+        lines.append(f'   - Momentum: popularity {round(parts["popularity"],1)} ({parts["basis"]}; {md_text(parts["note"])}) + coverage {parts["coverage"]}')
     details=[f'topic: {md_text(p.get("topic"))}']
     if p.get('coverage',1)>1:details.append(f'platforms: {p["coverage"]} ({md_text(", ".join(p.get("sources",[])+p.get("related_sources",[])))})')
     if p.get('reasons'):details.append('why it ranks: '+md_text('; '.join(p['reasons'])))
@@ -223,6 +237,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 - Relevance: 30; freshness: 25; evidence: 15; independent platform coverage: 15; primary source: 5; platform popularity: 10 (percentile within the same source over 7 days).
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
+- Trending Now (`sort=trending`) orders by momentum, up to 25: popularity plus coverage. `momentum_parts` in JSON gives both and the popularity basis: a percentile of the platform metric within the same source over 7 days, or, for articles without one, the percentile of editorial weight (relevance + evidence + primary source) among recent publications. In every period, after three stories of one source further ones compete for the top ten with a fifth of the measure's scale taken off (5 momentum, 20 score, 15 significance), so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date. Hype model dates represent updates, not original model creation.
 '''

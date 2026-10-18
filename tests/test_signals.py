@@ -209,8 +209,24 @@ class Signals(unittest.TestCase):
                    metrics=[dict(kind='likes',value=5,label='likes')])
         unknown=dict(known,title='someone/humanizer')
         parts=lambda p:{x['id']:x['points'] for x in signals.score(p,[p],NOW,CFG)[1]}
-        self.assertEqual(parts(known)['relevance'],30);self.assertEqual(parts(unknown)['relevance'],24)
+        self.assertEqual(parts(known)['relevance'],30);self.assertEqual(parts(unknown)['relevance'],18)
         self.assertEqual(parts(known)['engagement'],10)
+        # A quant or uncensored fine-tune of a tracked family is not its release.
+        for title in ('DavidAU/Qwen3.8-Flash-Abliterated-GGUF','turboderp/GLM-5.3-Flash-exl3','unsloth/Qwen3.8-27B-GGUF','realrebelai/FLUX-3-Image-Klein_GGUFs'):
+            self.assertEqual(parts(dict(known,title=title))['relevance'],18,title)
+        self.assertEqual(parts(dict(known,title='nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-NVFP4'))['relevance'],30)
+
+    def test_model_name_and_self_link_are_not_evidence(self):
+        model=post(content_kind='model',category='model',title='someone/Agens-32B-Preview',selftext='Parameters: 32,000,000',
+                   url='https://huggingface.co/someone/Agens-32B-Preview',links=[],article_url='https://huggingface.co/someone/Agens-32B-Preview')
+        parts=lambda p:{x['id']:x['points'] for x in signals.score(p,[p],NOW,CFG)[1]}
+        self.assertEqual(parts(model)['evidence'],0)
+        self.assertEqual(parts(dict(model,selftext='45 tok/s on one GPU',links=['https://github.com/someone/agens']))['evidence'],12)
+        # A news headline reporting a size still counts as a measurement.
+        self.assertEqual(parts(post(title='Lab releases a 32B model',selftext='',links=[]))['evidence'],7)
+        # A Hype update fades like news (24 h), not like a model release (168 h).
+        updated=dict(model,date_kind='updated',created_utc=NOW-24*3600)
+        self.assertAlmostEqual(parts(updated)['freshness'],12.5,places=1)
 
     def test_news_release_title_and_cross_outlet_story_coverage(self):
         news=post(title='DeepSeek Just Released V4.1-Flash-1017, Scores 77.0 on DeepSWE',selftext='',links=[],
