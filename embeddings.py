@@ -87,9 +87,9 @@ class Store:
             db.execute('DELETE FROM vectors WHERE model!=?',(config[2],))
             stored={row[0] for row in db.execute('SELECT digest FROM vectors')}
             db.executemany('DELETE FROM vectors WHERE digest=?',((d,) for d in stored-wanted.keys()))
-        missing=[d for d in wanted if d not in stored][:PER_REFRESH]
+        missing=[d for d in wanted if d not in stored]
         added=0
-        for start in range(0,len(missing),BATCH):
+        for start in range(0,min(len(missing),PER_REFRESH),BATCH):
             batch=missing[start:start+BATCH]
             try:vectors=embed([wanted[d] for d in batch],config)
             except Exception as exc:
