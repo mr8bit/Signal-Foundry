@@ -188,7 +188,7 @@ Each combined RSS group requests up to 100 entries with no pagination. Large com
 
 ### Publications, labs and newsletters
 
-Includes TechCrunch AI, The Verge AI, Ars Technica AI, Wired AI, MIT Technology Review AI, The Register, Tom's Hardware, MarkTechPost, VentureBeat, The Decoder and SiliconANGLE; OpenAI, Google AI, DeepMind, Hugging Face, NVIDIA Developer, Qwen, Mistral and Anthropic; Simon Willison, Latent Space, Interconnects and Import AI; plus Hacker News. Habr is excluded.
+Includes TechCrunch AI, The Verge AI, Ars Technica AI, Wired AI, MIT Technology Review AI, The Register, Tom's Hardware, MarkTechPost, VentureBeat (through a Google News search for `site:venturebeat.com`, since VentureBeat answers our feed requests with HTTP 429; links are Google redirects and the item's `<source>` names the outlet for coverage and the card's domain), The Decoder and SiliconANGLE; OpenAI, Google AI, DeepMind, Hugging Face, NVIDIA Developer, Qwen, Mistral and Anthropic; Simon Willison, Latent Space, Interconnects and Import AI; plus Hacker News. Habr is excluded.
 
 RSS 2.0 and Atom are supported, including `content:encoded`, publication/update dates and XHTML. Full feed content takes precedence over short descriptions. Relative links become absolute. Undated entries are skipped; timezone-free dates are treated as UTC. Anthropic uses a single HTML newsroom listing, with midnight UTC for date-only records and no per-article crawl or pagination.
 

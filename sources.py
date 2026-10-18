@@ -117,6 +117,8 @@ def parse_site_feed(data, source):
             stamp = entry.findtext('pubDate', '') or entry.findtext('dc:date', '', ns)
             content = entry.findtext('content:encoded', '', ns) or entry.findtext('description', '')
         item = post(source, title, url, stamp, content, rank)
+        if item and not atom:
+            item = google_news_item(item, entry.find('source'))
         if item:
             item=normalize_note(item)
             # WordPress (slash) and Atom threading (thr) feeds carry the article's comment count.
@@ -127,6 +129,18 @@ def parse_site_feed(data, source):
                 item['discussion_url'] = next((x for x in item['links'] if 'news.ycombinator.com/item?' in x), '')
             result.append(item)
     return result
+
+
+def google_news_item(item, outlet):
+    """A Google News search feed stands in for an outlet that blocks our feed requests (VentureBeat). Its links are
+    Google redirects, so the outlet comes from the item's <source url>: it identifies the publisher for coverage and
+    the card's domain. The title loses its " - Outlet" suffix; the description only repeats the title."""
+    if (urlsplit(item['url']).hostname or '') != 'news.google.com' or outlet is None:
+        return item
+    host = (urlsplit(outlet.get('url', '')).hostname or '').lower().removeprefix('www.')
+    name = (outlet.text or '').strip()
+    title = item['title'][:-len(' - '+name)] if name and item['title'].endswith(' - '+name) else item['title']
+    return item | dict(title=title, selftext='', links=[], publisher_host=host or None)
 
 
 class Newsroom(HTMLParser):

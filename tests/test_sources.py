@@ -34,6 +34,19 @@ class Sources(unittest.TestCase):
         self.assertIsNone(bot.reject(p,CFG,NOW))
         self.assertEqual(bot.reject(dict(p,created_utc=NOW-49*3600),CFG,NOW),'age')
 
+    def test_google_news_search_feed_names_the_real_outlet(self):
+        feed=b'''<rss version="2.0"><channel><item><title>Gartner says agent costs will rise fivefold - VentureBeat</title>
+<link>https://news.google.com/rss/articles/CBMiabc?oc=5</link><pubDate>Fri, 16 Oct 2026 19:00:00 GMT</pubDate>
+<description>&lt;a href="https://news.google.com/rss/articles/CBMiabc?oc=5"&gt;Gartner says agent costs&lt;/a&gt; VentureBeat</description>
+<source url="https://venturebeat.com">VentureBeat</source></item></channel></rss>'''
+        [item]=parse_site_feed(feed,SOURCE)
+        self.assertEqual(item['title'],'Gartner says agent costs will rise fivefold')
+        self.assertEqual((item['publisher_host'],item['selftext'],item['links']),('venturebeat.com','',[]))
+        import signals
+        self.assertEqual(signals.publisher(item),'venturebeat.com')
+        # An ordinary feed item is untouched.
+        self.assertNotIn('publisher_host',parse_site_feed(RSS,SOURCE)[0])
+
     def test_atom_xhtml_relative_links_and_publication_date(self):
         p=parse_site_feed(ATOM,SOURCE)[0]
         self.assertEqual(p['url'],'https://example.com/article')

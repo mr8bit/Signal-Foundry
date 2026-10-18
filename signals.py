@@ -122,6 +122,8 @@ def ranking_metadata(members):
 def publisher(p):
     if p.get('source') != 'site':
         return 'reddit.com'
+    if p.get('publisher_host'):
+        return p['publisher_host']
     if p.get('cloud_provider'):
         return {'google':'google','aws':'amazon.com','microsoft':'microsoft.com','vercel':'vercel.com','cloudflare':'cloudflare.com'}.get(p['cloud_provider'],p['cloud_provider'])
     host = (urlsplit(p.get('article_url','')).hostname or '').lower().removeprefix('www.')
@@ -740,7 +742,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
             enterprise_reasons=list(dict.fromkeys(reason for member in members for reason in enterprise_reasons(member))),
             published_at=p['created_utc'],score=number,components=components,reasons=reasons,
             priority=priority(p,cfg),topic='Models' if p.get('content_kind')=='model' else LABELS[priority(p,cfg)],url=url,discussion_url=discussion,
-            domain=urlsplit(url).hostname or '',coverage=len({publisher(m) for m in members+related}),
+            domain=p.get('publisher_host') or urlsplit(url).hostname or '',coverage=len({publisher(m) for m in members+related}),
             sources=list(dict.fromkeys(source_name(m) for m in members)),
             related_sources=list(dict.fromkeys(source_name(m) for m in related)),
             also=also,story_links=story_links(url,discussion,members,related),

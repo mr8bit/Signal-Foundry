@@ -262,11 +262,11 @@ class Lookups:
         data=json.loads(body)
         return [(key,'reactions',(data.get('reaction_count') or 0)+(data.get('restacks') or 0)),(key,'comments',data.get('comment_count'))]
 
-    def gnews(self,key,title):
+    def gnews(self,key,title,own_host=None):
         query=story_query(title)
         if not query:return []
         body=self.fetch('gnews',key,'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q='+quote(query))
-        return [(key,'news_outlets',parse_gnews(body,title,key.split('/',1)[0]))] if body else []
+        return [(key,'news_outlets',parse_gnews(body,title,own_host or key.split('/',1)[0]))] if body else []
 
     def most_read(self,name,url):
         if not self.open() or not self.store.due(url,'most_read',self.cfg['ttl_seconds']['most_read'],self.now):return []
@@ -299,14 +299,15 @@ def refresh(posts,cfg,now=None,stop=None,store=None,http=None):
     for key,(url,p) in articles.items():
         if p.get('source_id') in settings['substack_sources'] and look.take('substack',key):rows+=look.substack(key,url)
     for key,(url,p) in articles.items():
-        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key,p['created_utc']):rows+=look.gnews(key,p['title'])
+        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key,p['created_utc']):rows+=look.gnews(key,p['title'],p.get('publisher_host'))
     for key,p in artifacts.items():
         if key.startswith('huggingface.co/') and p.get('content_kind')=='model' and p.get('provider_trending_score') is None and look.take('hf',key):
             rows+=look.hf(key)
     for key,p in artifacts.items():
         if key.startswith('github.com/') and p.get('source_id')!='github_trending' and look.take('github',key):rows+=look.github(key)
     for key,(url,p) in articles.items():
-        if look.take('hn',key,p['created_utc']):rows+=look.hn(key,url)
+        # A Google News redirect is never the URL submitted to HN.
+        if not p.get('publisher_host') and look.take('hn',key,p['created_utc']):rows+=look.hn(key,url)
     written+=store.record(rows,now)
     LOG.info('attention_refresh readings=%s lookups=%s errors=%s',written,dict(look.counts),dict(look.errors))
     return dict(readings=written,lookups=dict(look.counts),errors=dict(look.errors))
