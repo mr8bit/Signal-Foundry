@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import logging
 import re
 from pathlib import Path
 import sqlite3
@@ -14,8 +15,10 @@ from email.utils import formatdate
 import bot
 from cloud_news import prepare_cloud_posts
 import attention
+import embeddings
 from signals import build_items, popularity_baseline, channel_baseline, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
 
+LOG=logging.getLogger('dashboard')
 PERIODS={'now':48,'day':24,'week':168,'month':720,'year':8760}
 
 
@@ -33,7 +36,7 @@ def archive_posts(posts,path='data/news.sqlite3'):
         return [json.loads(payload)|{'first_seen':first} for payload,first in db.execute('SELECT payload,first_seen FROM news')]
 
 
-def dataset(posts,cfg,statuses,now=None,readings=None):
+def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):
     now=now or time.time()
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
@@ -42,13 +45,16 @@ def dataset(posts,cfg,statuses,now=None,readings=None):
     # Attention readings are only read here; the collector records them (attention.refresh).
     readings=attention.load(now) if readings is None else readings
     baseline=popularity_baseline(posts,now,cfg)|channel_baseline(readings)
-    items=build_items(posts,cfg,now,baseline=baseline,readings=readings)
+    # Story vectors are only read here; build() embeds new stories before calling dataset.
+    vectors=embeddings.Store().load() if vectors is None else vectors
+    common=dict(baseline=baseline,readings=readings,vectors=vectors)
+    items=build_items(posts,cfg,now,**common)
     # Rank each collection independently: a newsletter linking many models must
     # not replace model cards through the mixed feed's cross-source deduplication.
-    rankings={category:build_items([p for p in posts if SIGNAL_CATEGORIES.get(p.get('category'))==category],cfg,now,baseline=baseline,readings=readings)
+    rankings={category:build_items([p for p in posts if SIGNAL_CATEGORIES.get(p.get('category'))==category],cfg,now,**common)
               for category in ('models','repos','papers','media')}
-    rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',baseline=baseline,readings=readings)
-    rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,baseline=baseline,readings=readings)
+    rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',**common)
+    rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,**common)
     return dict(generated_at=now,items=items,signal_rankings=rankings,statuses=statuses,cloud_pending=pending,
         sources=[dict(id=s['id'],name=s['name'],category=s['category'],categories=s.get('categories',[s['category']])) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[
             dict(id='reddit:'+s,name='r/'+s,category='community') for s in cfg['subreddits']],
@@ -126,6 +132,8 @@ def build(snapshot='data/feed-snapshot.json',limit=None):
     posts=json.loads(Path(snapshot).read_text())
     # Keep previously enriched article text; refresh is a separate explicit collection step.
     posts=archive_posts(posts)
+    try:embeddings.Store().refresh(posts)
+    except Exception:LOG.exception('embeddings_refresh_failed')
     status_path=Path('data/feed-status.json')
     statuses=json.loads(status_path.read_text()) if status_path.exists() else []
     data=dataset(posts,cfg,statuses)

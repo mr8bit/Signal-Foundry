@@ -34,6 +34,10 @@ services:
       <<: *environment
       # Optional: a token without scopes raises the GitHub API limit from 60 to 5000 requests per hour.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Optional OpenAI-compatible embeddings API for story matching; empty keeps TF-IDF.
+      SIGNAL_EMBEDDINGS_URL: ${SIGNAL_EMBEDDINGS_URL:-}
+      SIGNAL_EMBEDDINGS_KEY: ${SIGNAL_EMBEDDINGS_KEY:-}
+      SIGNAL_EMBEDDINGS_MODEL: ${SIGNAL_EMBEDDINGS_MODEL:-}
     mem_limit: 512m
     cpus: 1.0
     healthcheck:

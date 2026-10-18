@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlsplit
 import attention
 import bot
+import embeddings
 from cloud_news import prepare_cloud_posts,availability_for
 from presentation import english_post
 
@@ -415,6 +416,11 @@ LEAD_CHARS=400
 RARE_DF=8
 STORY_MERGE=0.40
 STORY_RELATED=0.25
+# With an embedder both stories need a vector; thresholds were calibrated on labelled pairs for
+# Giga-Embeddings-instruct-3B (256 int8 dimensions, embeddings.TASK): different events stayed below 0.55,
+# retold ones reached 0.57-0.88. Above 0.68 only reports of one event and pieces of one launch remained.
+EMBED_MERGE=0.68
+EMBED_RELATED=0.56
 STORY_STOP={'the','and','for','with','from','that','this','these','those','has','have','had','was','were','are','its','his',
             'her','their','they','them','our','your','you','who','what','when','why','how','will','can','could','would',
             'should','may','might','says','said','say','new','now','just','more','most','than','then','into','over','after',
@@ -464,10 +470,12 @@ def story_names(text,title=False):
 
 
 class StoryIndex:
-    """Title-and-lead similarity of article stories in one build."""
-    def __init__(self,posts):
-        self.terms,self.titles={},{}
+    """Title-and-lead similarity of article stories in one build: embeddings where both have a vector, else TF-IDF."""
+    def __init__(self,posts,vectors=None):
+        self.terms,self.titles,self.embedded={},{},{}
         for p in posts:
+            vector=vectors and vectors.get(embeddings.digest(embeddings.story_text(p)))
+            if vector:self.embedded[id(p)]=vector
             lead=(p.get('article_text') or p.get('selftext',''))[:LEAD_CHARS]
             self.terms[id(p)]=(Counter(story_words(p['title'])*2+story_words(lead)),
                                story_names(p['title'],title=True),story_names(lead[:200]))
@@ -483,21 +491,25 @@ class StoryIndex:
             self.vectors[key]={w:x/norm for w,x in weights.items()}
 
     def compare(self,a,b):
-        """(cosine, rare names shared by the titles, rare names shared anywhere)."""
-        va,vb=self.vectors[id(a)],self.vectors[id(b)]
-        cosine=sum(x*vb.get(w,0) for w,x in va.items())
+        """(cosine, embedded, rare names shared by the titles, rare names shared anywhere)."""
+        ea,eb=self.embedded.get(id(a)),self.embedded.get(id(b))
+        if ea and eb:cosine=embeddings.cosine(ea,eb)
+        else:
+            va,vb=self.vectors[id(a)],self.vectors[id(b)]
+            cosine=sum(x*vb.get(w,0) for w,x in va.items())
         (_,ta,la),(_,tb,lb)=self.terms[id(a)],self.terms[id(b)]
         rare=lambda names:{w for w in names if self.idf(w)>=self.rare}
-        return cosine,rare(ta&tb),rare((ta|la)&(tb|lb))
+        return cosine,bool(ea and eb),rare(ta&tb),rare((ta|la)&(tb|lb))
 
-    def same_story(self,a,b,threshold):
+    def same_story(self,a,b,merge):
         """Merging needs a rare name in both titles. Coverage also takes two shared rare names from the leads, or
         the same company in both titles with a rare title word ("Anthropic … junior staff" / "Anthropic … less junior")."""
         (wa,va),(wb,vb)=self.titles[id(a)],self.titles[id(b)]
         if va and vb and not va&vb:return False
-        cosine,titles,anywhere=self.compare(a,b)
-        if cosine<threshold:return False
-        if threshold>=STORY_MERGE:return bool(titles)
+        cosine,embedded,titles,anywhere=self.compare(a,b)
+        merging,relating=(EMBED_MERGE,EMBED_RELATED) if embedded else (STORY_MERGE,STORY_RELATED)
+        if cosine<(merging if merge else relating):return False
+        if merge:return bool(titles)
         return bool(titles) or len(anywhere)>=2 or bool(va&vb and any(self.idf(w)>=self.rare for w in wa&wb))
 
 
@@ -523,7 +535,7 @@ def related_stories(stories,retelling=None):
             t=reference_time(p)[0]
             nearby=timeline[bisect_left(times,t-STORY_WINDOW):bisect_right(times,t+STORY_WINDOW)]
             retold={j for _,j in nearby if j!=i and publisher(stories[j][0]) not in own
-                    and retelling.same_story(p,stories[j][0],STORY_RELATED)}
+                    and retelling.same_story(p,stories[j][0],merge=False)}
         for j in (candidates|retold)-{i}:
             q,others=stories[j]
             if j in retold or abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
@@ -587,7 +599,7 @@ def merge_similar(stories,index=None):
     Articles match by title (similar_articles) or, across outlets, as a retold story (StoryIndex)."""
     index=index or StoryIndex([s[0] for s in stories if not s[0].get('content_kind')])
     def similar(p,q):
-        return similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,STORY_MERGE)
+        return similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,merge=True)
     order=sorted(range(len(stories)),key=lambda i:stories[i][0]['created_utc'])
     clusters=[]
     for i in order:
@@ -658,7 +670,7 @@ def story_links(url,discussion,members,related):
     return links
 
 
-def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=None):
+def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=None,vectors=None):
     posts=[english_post(p) for p in posts]
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
@@ -681,7 +693,8 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
             keys=aliases if len(chains)==1 else aliases&set().union(*(story_keys(m) for m in chain))
             grouped.append((representative(chain,chosen),chain,keys))
     stories,merged=[],[]
-    for cluster in merge_similar(grouped):
+    reps=[rep for rep,_,_ in grouped if not rep.get('content_kind')]
+    for cluster in merge_similar(grouped,StoryIndex(reps,vectors)):
         parts=[grouped[i] for i in cluster]
         lead=cluster_lead([rep for rep,_,_ in parts])
         members=list({(source_id(m),m['id']):m for _,group,_ in parts for m in group}.values())
@@ -693,7 +706,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
     series=enterprise_series(posts) if focus=='enterprise' else None
     baseline=(popularity_baseline(posts,now,cfg)|channel_baseline(readings)) if baseline is None else baseline
     result=[]
-    for (aliases,also,news_at),(p,members),related in zip(merged,stories,related_stories(stories)):
+    for (aliases,also,news_at),(p,members),related in zip(merged,stories,related_stories(stories,StoryIndex([p for p,_ in stories if not p.get('content_kind')],vectors))):
         number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline,readings)
         stable=next(iter(sorted(k for k in aliases if k.startswith(('github.com/','huggingface.co/')))),None)
         stable=stable or next(iter(sorted(k for k in aliases if k.startswith('article:'))),None) or sorted(aliases)[0]
