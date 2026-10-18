@@ -119,13 +119,17 @@ Platform sorting is available outside Trending Now: GitHub daily stars, HF trend
 
 | Component | Maximum | Rule |
 |---|---:|---|
-| Relevance | 30 | Model releases: 30; measured local inference: 24; tools: 18; research: 12; industry: 6 |
+| Relevance | 30 | Model releases: 30; measured local inference: 24; tools: 18; policy & business (publications): 15; research: 12; industry: 6 |
 | Freshness | 25 | `25 × 2^(-age_hours / half_life_hours)` |
 | Evidence | 15 | Measurements +7, model/repository link +5, research/benchmark cues +3. For a model or repository its own name, parameter count and own URL are not evidence |
 | Primary source | 5 | An official lab or qualifying cloud source is present |
 | Attention | 25 | Platform, discussion and reach signals, each a percentile against its own last 7 days (below) |
 
-A release headline naming a tracked model family, or that family in model trends, receives 30 relevance points. Other trending models, and quants, merges or uncensored fine-tunes of a tracked family (GGUF, AWQ, GPTQ, EXL2/3, MLX, abliterated, imatrix, LoRA…), receive 18. Enterprise uses its own evidence weights: 30 for a headline cue, 24 for adoption reported by a publication, 18 for a vendor customer story or body-only evidence, and 12 for further stories in the same vendor series after a full-weight story within seven days. Stories stay visible when their weight is reduced.
+A release headline naming a tracked model family, or that family in model trends, receives 30 relevance points. Other trending models, and quants, merges or uncensored fine-tunes of a tracked family (GGUF, AWQ, GPTQ, EXL2/3, MLX, abliterated, imatrix, LoRA…), receive 18.
+
+Publications and lab posts are judged by their headline. A release verb (releases, launches, introduces, unveils, reveals, debuts, ships, open-sources, "Meet …") with a model word (model, weights, LLM, VLM, VLA) is a model release without the family being tracked ("Microsoft reveals MAI-Base-2 model"), and an article merged with or retelling a release is a release too, so outlets wording the same news differently get the same level. A publication's how-to or listicle ("How to…", "20 Jev Alternatives", "What it really costs") is Industry and its numbers are not evidence. Industry headlines about regulation, courts, export controls, deals, rounds of at least $100M, valuations, shares or the workforce are **Policy & business** (15). A lab's or cloud's own post counts at least as Tools (18) and its launch as 24; tutorials keep the ladder. Threads keep the ladder from their own title and text.
+
+Enterprise uses its own evidence weights: 30 for a headline cue, 24 for adoption reported by a publication, 18 for a vendor customer story or body-only evidence, and 12 for further stories in the same vendor series after a full-weight story within seven days. Stories stay visible when their weight is reduced.
 
 Freshness half-lives: news and repositories 24 hours, papers 72 hours, models 168 hours. HF models use `createdAt`, papers their publication date, and GitHub Trending its first archived observation.
 

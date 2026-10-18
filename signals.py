@@ -233,13 +233,56 @@ def reference_time(p):
     return p.get('first_seen',p['created_utc']),'first seen trending'
 
 
+# A headline announcing a model: a release verb with a tracked model or a model word ("Microsoft reveals MAI-Base-2
+# model", "Reflection AI open-sources Beam's weights"), so new names count without being added to the config.
+RELEASE_VERB=re.compile(r'^meet\b|\b(?:releas(?:e|es|ed|ing)|launch(?:es|ed)?|introduc(?:es|ing)|unveil(?:s|ed)?|reveal(?:s|ed)?|'
+                        r'debut(?:s|ed)?|ships|announces|open[- ]sourc(?:es|ed|ing))\b',re.I)
+MODEL_WORD=re.compile(r'\b(?:models?|weights|LLMs?|VLMs?|VLAs?)\b',re.I)
+# Publications' how-tos and listicles ("20 Jev Alternatives", "What It Really Costs") are not news, and their numbers
+# are examples, not measurements.
+LISTICLE=re.compile(r'^(?:the\s+)?(?:top\s+)?\d+\s+(?:[\w’\'.-]+\s+){0,3}(?:alternatives|tools|ways|tips|things|reasons|examples|lessons|insights)\b|'
+                    r'\bwhat it really costs\b',re.I)
+# Regulation, courts, deals, large rounds and workforce moves: industry news that matters beyond its outlet.
+POLICY=re.compile(r'\b(?:regulat\w*|laws?|lawsuits?|sue[sd]?|courts?|judges?|rulings?|ban(?:s|ned)?|export controls?|sanctions?|antitrust|'
+                  r'FTC|AI Act|bills?|legislat\w*|senate|congress|government|ministry|acquir\w*|acquisitions?|mergers?|IPO|'
+                  r'valuation|shares|layoffs?|lays off|hir(?:e|es|ed|ing)|workforce)\b|\$\s?\d+(?:\.\d+)?\s*(?:billion|bn|B)\b|'
+                  r'\$\s?[1-9]\d{2,}\s*(?:million|M)\b',re.I)
+POLICY_RELEVANCE=15
+
+
+def publication(p):
+    """An article of a news outlet or a lab: the rules for headlines below apply to them, not to threads."""
+    return p.get('source')=='site' and not p.get('content_kind') and p.get('category') in ('news','lab')
+
+
+def tutorial(p):
+    """A publication's how-to or listicle."""
+    return p.get('category')=='news' and bool(bot.TUTORIAL.search(p['title']) or LISTICLE.search(p['title']))
+
+
 def priority(p,cfg=None):
-    """bot.priority plus named model releases, which news and lab titles announce without links or numbers."""
+    """bot.priority plus model releases, which news and lab titles announce without links or numbers.
+    A publication's how-to or listicle is Industry whatever it mentions."""
+    if tutorial(p):return 5
     base=bot.priority(p)
     models=(cfg or {}).get('models',[])
-    if base>1 and not p.get('content_kind') and not bot.TUTORIAL.search(p['title']) and bot.matches(p['title'],models) and bot.matches(p['title'],RELEASE):
+    if base>1 and not p.get('content_kind') and not bot.TUTORIAL.search(p['title']) and (
+            bot.matches(p['title'],models) and bot.matches(p['title'],RELEASE)
+            or publication(p) and RELEASE_VERB.search(p['title']) and MODEL_WORD.search(p['title'])):
         return 1
     return base
+
+
+def story_level(p,members,cfg=None,retold=()):
+    """(priority, topic) of a story. A model release is one however an outlet words it: an article merged with or
+    retelling a release ("DeepSeek releases V4.1-Flash" for "DeepSeek V4.1 Flash beats larger rivals") is a release too. Industry news about regulation, courts, deals or the workforce is Policy & business."""
+    if p.get('content_kind'):return priority(p,cfg),'Models' if p['content_kind']=='model' else LABELS[priority(p,cfg)]
+    # Only a publication takes its retellings' release: a thread playing with a new model is not one. Other levels
+    # come from each article's own wording and body, so they are not carried over.
+    level=priority(p,cfg)
+    if level>1 and publication(p) and any(publication(m) and priority(m,cfg)==1 for m in [*members,*retold]):level=1
+    if level==5 and publication(p) and not tutorial(p) and POLICY.search(p['title']):return 5,'Policy & business'
+    return level,LABELS[level]
 
 
 def fingerprint(p):
@@ -270,18 +313,19 @@ OFFICIAL_LAUNCH=re.compile(r'^(?:introducing|announcing|meet|welcome)\b|\b(?:lau
                            r'generally available|rolls? out|rolling out|releas(?:e|es|ed|ing))\b',re.I)
 
 
-def editorial_basis(p,members,cfg=None):
+def editorial_basis(p,members,cfg=None,retold=()):
     """Relevance, evidence and primary-source points with the flags behind them: a story's weight before timing and reach."""
-    priority_=priority(p,cfg)
+    priority_,topic=story_level(p,members,cfg,retold)
     artifact=p.get('content_kind') in ('model','repository')
     text=p['title']+' '+p.get('article_text',p.get('selftext',''))
-    measured=bool(re.search(MEASURE if artifact else MEASURE+SIZE_CUE,text,re.I))
+    measured=bool(re.search(MEASURE if artifact else MEASURE+SIZE_CUE,text,re.I)) and not tutorial(p)
     # A model or repository linking to itself is not evidence; a link to another artifact is.
     own=bot.canonical(p.get('url','')) if artifact else None
     repository=any(bot.canonical(url) and bot.canonical(url)!=own for url in [p.get('url','')]+p.get('links',[]))
-    research=bot.matches(text,['paper','arXiv','research','benchmark'])
+    research=bot.matches(text,['paper','arXiv','research','benchmark']) and not tutorial(p)
     unknown_model=p.get('content_kind')=='model' and (not bot.matches(p['title'],(cfg or {}).get('models',[])) or bool(DERIVATIVE.search(p['title'])))
-    values=dict(relevance=18 if unknown_model else (6-priority_)*6,evidence=7*measured+5*repository+3*research,
+    values=dict(relevance=18 if unknown_model else POLICY_RELEVANCE if topic=='Policy & business' else (6-priority_)*6,
+                evidence=7*measured+5*repository+3*research,
                 primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0)
     # The ladder is built for open models, so a lab's or cloud's own post ("Introducing dots") fell to Industry (6 of 30)
     # below any trending repository. An official post counts at least as Tools, an official launch as Local inference;
@@ -289,7 +333,7 @@ def editorial_basis(p,members,cfg=None):
     official=[m for m in members if m.get('category') in ('lab','cloud') and not bot.TUTORIAL.search(m['title'])]
     if official and not artifact:
         values['relevance']=max(values['relevance'],24 if any(OFFICIAL_LAUNCH.search(m['title']) for m in official) else 18)
-    return values,dict(priority=priority_,measured=measured,repository=repository,unknown_model=unknown_model)
+    return values,dict(priority=priority_,topic=topic,measured=measured,repository=repository,unknown_model=unknown_model)
 
 
 # Attention channels from stored readings (attention.py), each ranked against its own recent values.
@@ -374,7 +418,7 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseli
     age=max(0,(now-stamp)/3600)
     # A reported update is not a release: it fades like news, not like a new model.
     half_life=24 if p.get('date_kind')=='updated' else HALF_LIFE.get(p.get('content_kind'),24)
-    basis,flags=editorial_basis(p,members,cfg)
+    basis,flags=editorial_basis(p,members,cfg,related)
     priority_,measured,repository,unknown_model=flags['priority'],flags['measured'],flags['repository'],flags['unknown_model']
     own={publisher(m) for m in members}
     publishers=own|{publisher(m) for m in related}
@@ -391,7 +435,7 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseli
     if focus=='enterprise': reasons.append(focus_reason)
     elif p.get('date_kind')=='updated' and p.get('content_kind')=='model': reasons.append('Model update')
     elif unknown_model: reasons.append('Trending model')
-    elif priority_<5: reasons.append(LABELS[priority_])
+    elif priority_<5 or flags['topic']=='Policy & business': reasons.append(flags['topic'])
     if measured: reasons.append('Includes measurements')
     if repository: reasons.append('Model or repository link')
     if len(publishers)>1: reasons.append(f'{len(publishers)} independent platforms')
@@ -763,6 +807,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
     for (aliases,also,news_at),(p,members),(related,linked) in zip(merged,stories,related_stories(stories,StoryIndex([p for p,_ in stories if not p.get('content_kind')],vectors))):
         links.append(linked)
         number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline,readings)
+        level=story_level(p,members,cfg,related)
         stable=next(iter(sorted(k for k in aliases if k.startswith(('github.com/','huggingface.co/')))),None)
         stable=stable or next(iter(sorted(k for k in aliases if k.startswith('article:'))),None) or sorted(aliases)[0]
         sid=source_id(p)
@@ -786,7 +831,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
             cloud_availability=availability_for(members),
             enterprise_reasons=list(dict.fromkeys(reason for member in members for reason in enterprise_reasons(member))),
             published_at=p['created_utc'],score=number,components=components,reasons=reasons,
-            priority=priority(p,cfg),topic='Models' if p.get('content_kind')=='model' else LABELS[priority(p,cfg)],url=url,discussion_url=discussion,
+            priority=level[0],topic=level[1],url=url,discussion_url=discussion,
             domain=p.get('publisher_host') or urlsplit(url).hostname or '',coverage=len({publisher(m) for m in members+related}),
             sources=list(dict.fromkeys(source_name(m) for m in members)),
             related_sources=list(dict.fromkeys(source_name(m) for m in related)),

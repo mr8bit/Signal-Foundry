@@ -232,12 +232,36 @@ class Signals(unittest.TestCase):
         body='We use open-source weights from https://huggingface.co/nvidia/sdm, released last week. Benchmark: 40 tok/s.'
         tutorial=post(title='How to Make Zero-Training Tabular Predictions with NVIDIA Structured Data Models',selftext=body,
                       links=['https://huggingface.co/nvidia/sdm'],source_id='marktechpost')
-        self.assertEqual(signals.priority(tutorial,CFG),3)
-        self.assertEqual(signals.priority(dict(tutorial,title='A Coding Guide to Qwen3.8 released with open weights'),CFG),3)
+        # A publication's how-to is Industry, however many models and numbers it mentions.
+        self.assertEqual(signals.priority(tutorial,CFG),5)
+        self.assertEqual(signals.priority(dict(tutorial,title='A Coding Guide to Qwen3.8 released with open weights'),CFG),5)
         # A headline announcing the release still counts; a body mentioning one does not.
         self.assertEqual(signals.priority(dict(tutorial,title='NVIDIA released open weights for Structured Data Models'),CFG),1)
         self.assertEqual(signals.priority(dict(tutorial,title='Liquid AI Releases d1-ultra: A Multimodal Decision Model'),CFG),1)
         self.assertGreater(signals.priority(dict(tutorial,title='Structured data models are changing tabular ML'),CFG),1)
+
+    def test_publication_levels_follow_the_news_not_the_wording(self):
+        news=lambda title,**extra:post(**dict(title=title,selftext='',links=[],source_id='siliconangle',source_name='SiliconANGLE AI')|extra)
+        level=lambda p,**extra:signals.story_level(p,[p],CFG,**extra)
+        self.assertEqual(level(news('Microsoft reveals cutting-edge MAI-Base-2 model with 2T parameters')),(1,'Model release'))
+        self.assertEqual(level(news("Reflection AI open-sources Beam's weights, post-training recipes")),(1,'Model release'))
+        self.assertEqual(level(news('Google Open-Sources Harness2, a Recursive Agent Harnessing Framework'))[0]>1,True)
+        # The same story retold as a release elsewhere is a release here too.
+        beats=news('Deepseek V4.1 Flash 1017 beats larger rivals in agentic tasks',source_id='decoder')
+        self.assertEqual(level(beats)[0],5)
+        self.assertEqual(level(beats,retold=[news('DeepSeek releases updated V4.1-Flash model')])[0],1)
+        thread=post(id='t',source='rss',subreddit='DeepSeek',title='Deepseek v4.1 1017 - Horse',source_id=None,source_name=None,
+                    category='community',selftext='',links=[])
+        self.assertEqual(level(thread,retold=[news('DeepSeek releases updated V4.1-Flash model')])[0],5)
+        self.assertEqual(level(news('Anthropic Executive Says Open-Source AI Models Are Higher Risk'))[0],5)
+        self.assertEqual(level(dict(thread,title='I let Claude hire its first employee'))[1],'Industry')
+        self.assertEqual(level(news('China plans to tighten export controls on open-weight models')),(5,'Policy & business'))
+        self.assertEqual(level(news('RapidCanvas raises $29M to develop custom AI applications'))[1],'Industry')
+        self.assertEqual(level(news('Anthropic raises $5 billion at a $300 billion valuation'))[1],'Policy & business')
+        tips=news('20 Jev Alternatives: The Decision Models Taking On TypeSafe in 2026',selftext='Scores 95% at 40 tok/s on 24 GB VRAM')
+        basis=signals.editorial_basis(tips,[tips],CFG)[0]
+        self.assertEqual((basis['relevance'],basis['evidence']),(6,0))
+        self.assertEqual(signals.editorial_basis(news('China plans to tighten export controls on open-weight models'),[],CFG)[0]['relevance'],15)
 
     def test_model_name_and_self_link_are_not_evidence(self):
         model=post(content_kind='model',category='model',title='someone/Agens-32B-Preview',selftext='Parameters: 32,000,000',
