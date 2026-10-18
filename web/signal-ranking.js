@@ -17,9 +17,12 @@
   function validMetric(item,category){const m=metric(item,category);return m&&metrics[category]?.includes(m.kind)&&typeof m.value==='number'&&Number.isFinite(m.value)&&m.value>=0?m:null}
   function component(item,id){return (item.components||[]).find(c=>c.id===id)}
   const round=value=>Math.round(value*10)/10;
+  // A story without a platform metric (an article) uses momentum_proxy, its editorial weight as a percentile
+  // of recent publications, as in digest.py.
   function momentum(item){
     const engagement=component(item,'engagement'),coverage=component(item,'coverage');
-    return round((engagement?.available===false?0:engagement?.points||0)+(coverage?.points||0));
+    const popular=engagement?.available===false?engagement.momentum_proxy||0:engagement?.points||0;
+    return round(popular+(coverage?.points||0));
   }
   function significance(item){return round(item.score-(component(item,'freshness')?.points||0))}
   function measure(item,order){return order==='momentum'?momentum(item):order==='significance'?significance(item):item.score}
@@ -30,7 +33,7 @@
   function editorial(a,b){return b.score-a.score||b.published_at-a.published_at||String(a.id).localeCompare(String(b.id))}
   function rank(rows,category='all',order='editorial'){
     if(!categories.includes(category))category='all';
-    return rows.filter(item=>belongs(item,category)).sort((a,b)=>{
+    const sorted=rows.filter(item=>belongs(item,category)).sort((a,b)=>{
       if(order==='native'&&metrics[category]){
         const ma=validMetric(a,category),mb=validMetric(b,category);
         if(Boolean(ma)!==Boolean(mb))return ma?-1:1;
@@ -43,8 +46,24 @@
       if(order==='momentum'||order==='significance'){const d=measure(b,order)-measure(a,order);if(d)return d}
       return editorial(a,b);
     });
+    return order==='momentum'?diversify(sorted):sorted;
   }
-  const api={categories,metrics,PERIODS,MEASURES,belongs,metric:validMetric,rank,momentum,significance,
+  // Trending Now: past SOURCE_CAP stories of one source, further ones compete for the first SOURCE_WINDOW places
+  // at half their momentum (as in digest.py), so one source cannot fill the top yet weak stories are not promoted.
+  const SOURCE_CAP=3,SOURCE_WINDOW=10,SOURCE_PENALTY=0.5;
+  function diversify(rows){
+    const rest=rows.slice(),top=[],counts={},source=item=>item.source_id||item.source_name;
+    while(rest.length&&top.length<SOURCE_WINDOW){
+      let best=0,bestValue=-Infinity;
+      rest.forEach((item,i)=>{
+        const value=momentum(item)*((counts[source(item)]||0)>=SOURCE_CAP?SOURCE_PENALTY:1);
+        if(value>bestValue){best=i;bestValue=value}
+      });
+      const [item]=rest.splice(best,1);top.push(item);counts[source(item)]=(counts[source(item)]||0)+1;
+    }
+    return top.concat(rest);
+  }
+  const api={categories,metrics,PERIODS,MEASURES,belongs,metric:validMetric,rank,diversify,momentum,significance,
     newsTime,inPeriod,trending,headline};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.SignalRanking=api;

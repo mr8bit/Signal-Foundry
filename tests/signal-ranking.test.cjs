@@ -62,3 +62,13 @@ test('the card headline is the measure the tab sorts by',()=>{
   assert.deepEqual(ranking.headline(FIXTURE[0],'day'),{name:'Score',max:100,order:'editorial',value:40});
   assert.deepEqual(ranking.headline(FIXTURE[4],'month'),{name:'Significance',max:75,order:'significance',value:59.6});
 });
+test('Trending Now: articles use momentum_proxy and one source cannot fill the top',()=>{
+  const row=(id,source,points,extra={})=>({id,source_id:source,score:points,published_at:100,
+    components:[{id:'engagement',points,available:true,...extra},{id:'coverage',points:0}]});
+  const article=row('article','verge',0,{available:false,momentum_proxy:8});
+  assert.equal(ranking.momentum(article),8);
+  const rows=[0,1,2,3,4,5].map(i=>row('g'+i,'github',10-i*0.1)).concat([article,row('weak','decoder',1)]);
+  const order=ranking.rank(rows,'all','momentum').map(x=>x.id);
+  assert.deepEqual(order.slice(0,4),['g0','g1','g2','article']);
+  assert.ok(order.indexOf('g3')<order.indexOf('weak'));
+});

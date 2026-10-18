@@ -2,6 +2,7 @@
 
 Agents usually fetch a page without running JavaScript, so everything here is derived on the server
 from the same dataset and ordering the dashboard uses."""
+from collections import defaultdict
 from datetime import datetime, timezone
 import html
 import json
@@ -53,7 +54,24 @@ def ranked(data,category='all',period=DEFAULT_PERIOD,now=None):
     hours,order=WINDOWS[period]
     rows=data['items'] if category=='all' else (data.get('signal_rankings') or {}).get(category,[])
     rows=[p for p in rows if 0<=now-news_time(p)<=hours*3600]
-    return sorted(rows,key=lambda p:(-measure(p,order),-p['score'],-p['published_at'],str(p['id'])))
+    rows=sorted(rows,key=lambda p:(-measure(p,order),-p['score'],-p['published_at'],str(p['id'])))
+    return diversify(rows) if order=='momentum' else rows
+
+
+# Trending Now: past SOURCE_CAP stories of one source, further ones from that source compete for the first
+# SOURCE_WINDOW places at half their momentum, so one source cannot fill the top yet weak stories are not promoted.
+# Mirrored in web/signal-ranking.js.
+SOURCE_CAP,SOURCE_WINDOW,SOURCE_PENALTY=3,10,0.5
+
+
+def diversify(rows):
+    rest,top,counts=list(rows),[],defaultdict(int)
+    source=lambda p:p.get('source_id') or p.get('source_name')
+    while rest and len(top)<SOURCE_WINDOW:
+        # max keeps the first of equal values, so ties follow the existing order.
+        best=max(range(len(rest)),key=lambda i:momentum(rest[i])*(SOURCE_PENALTY if counts[source(rest[i])]>=SOURCE_CAP else 1))
+        p=rest.pop(best);top.append(p);counts[source(p)]+=1
+    return top+rest
 
 
 def news_time(p):
@@ -66,9 +84,13 @@ def component(p,key):
 
 
 def momentum(p):
-    """Platform popularity plus cross-outlet coverage, both taken from the score breakdown (max 25)."""
+    """Platform popularity plus cross-outlet coverage, both taken from the score breakdown (max 25).
+
+    A story without a platform metric (an article) uses its momentum_proxy: editorial weight as a percentile
+    of recent publications. Mirrored in web/signal-ranking.js."""
     engagement=component(p,'engagement')
-    return round((engagement.get('points',0) if engagement.get('available',True) else 0)+component(p,'coverage').get('points',0),1)
+    popular=engagement.get('points',0) if engagement.get('available',True) else engagement.get('momentum_proxy',0)
+    return round(popular+component(p,'coverage').get('points',0),1)
 
 
 def significance(p):
@@ -199,7 +221,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 ## Reading scores
 
-- Relevance: 30; freshness: 25; evidence: 15; independent platform coverage: 15; primary source: 5; platform popularity: 10.
+- Relevance: 30; freshness: 25; evidence: 15; independent platform coverage: 15; primary source: 5; platform popularity: 10 (percentile within the same source over 7 days).
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date. Hype model dates represent updates, not original model creation.

@@ -1,4 +1,5 @@
 """Explainable editorial ranking. No inferred popularity or growth metrics."""
+from bisect import bisect_left,bisect_right
 from collections import defaultdict
 from hashlib import sha256
 import math
@@ -12,7 +13,7 @@ COMPONENTS = [('relevance','Relevance',30),('freshness','Freshness',25),
               ('evidence','Evidence',15),('coverage','Cross-platform coverage',15),
               ('primary','Primary source',5),('engagement','Popularity',10)]
 LABELS = {1:'Model release',2:'Local inference',3:'Tools',4:'Research',5:'Industry'}
-SCORING_VERSION='editorial-v3'
+SCORING_VERSION='editorial-v4'
 SIGNAL_CATEGORIES={'model':'models','repository':'repos','paper':'papers','news':'media','cloud':'cloud'}
 RANKING_METRICS={'models':('trending','likes'),'repos':('stars_day',),'papers':('upvotes',)}
 # Strong cues (products, controls, deployment models) count anywhere in the excerpt. The weak cue
@@ -157,20 +158,62 @@ STOP={'that','this','with','from','have','will','what','more','about','into','yo
 STORY_WINDOW=72*3600
 
 
-def popularity(p):
-    # Per-platform saturation targets keep different units separate.
-    # HF trendingScore and stars_day are recent velocity; total likes are only a fallback.
-    targets={'stars_day':1000,'stars_week':7000,'stars_month':30000,'trending':1000,'likes':1000,'upvotes':300}
-    metrics=list(p.get('metrics',[]))
+# Popularity is a percentile within the post's own source and metric over the last BASELINE_DAYS:
+# the best GitHub repository of the week and the top Reddit thread both reach ~10, and raw units
+# of different platforms are never compared. Thin history falls back to fixed saturation targets.
+BASELINE_DAYS=7
+MIN_SAMPLE=10
+TARGETS={'stars_day':1000,'stars_week':7000,'stars_month':30000,'trending':1000,'likes':1000,'upvotes':300}
+
+
+def platform_metric(p):
+    """((source, kind), value, label) of the post's popularity on its own platform, or None.
+    HF trendingScore and stars_day are recent velocity; total likes are only a fallback."""
+    sid=source_id(p)
     if isinstance(p.get('provider_trending_score'),(int,float)):
-        metrics.insert(0,dict(kind='trending',value=p['provider_trending_score'],label='trendingScore Hugging Face'))
-    for metric in metrics:
-        kind,value=metric['kind'],metric['value']
-        if kind in targets:
-            points=min(10,10*math.log1p(max(0,value))/math.log1p(targets[kind]))
-            return points,True,f'{value} {metric["label"]}; saturation target {targets[kind]}'
+        return (sid,'trending'),p['provider_trending_score'],'trendingScore Hugging Face'
+    for metric in p.get('metrics',[]):
+        value=metric.get('value')
+        if metric.get('kind') in TARGETS and isinstance(value,(int,float)) and not isinstance(value,bool) and value>=0:
+            return (sid,metric['kind']),value,metric['label']
     raw=raw_points(p)
-    return (min(10,math.log10(raw+1)*2.5),True,f'{raw} points') if raw is not None and raw>=0 else (0,False,'No data')
+    if raw is not None and raw>=0:
+        return (sid,'points'),raw,'points'
+    if p.get('source')=='rss' and isinstance(p.get('feed_rank'),int) and p['feed_rank']>=0:
+        # Reddit RSS has no upvotes, but /top orders each subreddit group by them; a higher position is a larger value.
+        return ('reddit','top_rank'),-p['feed_rank'],'in the Reddit top listing'
+    return None
+
+
+def popularity_baseline(posts,now,cfg=None):
+    """Sorted recent values per (source, metric); each archived post counts once with its latest reading.
+    Publications without a platform metric form one pool of editorial weights, limited to stories the filters keep."""
+    values=defaultdict(list);seen=set()
+    for p in posts:
+        if not 0<=now-p.get('observed_at',p['created_utc'])<=BASELINE_DAYS*86400 or (source_id(p),p['id']) in seen:continue
+        seen.add((source_id(p),p['id']))
+        found=platform_metric(p)
+        if found:values[found[0]].append(found[1])
+        elif cfg is not None and not bot.reject(p,cfg,now,max_age_hours=BASELINE_DAYS*24):
+            values[('publications','weight')].append(sum(editorial_basis(p,[p],cfg)[0].values()))
+    return {group:sorted(sample) for group,sample in values.items()}
+
+
+def popularity(p,baseline=None):
+    found=platform_metric(p)
+    if found is None:return 0,False,'No data'
+    (_,kind),value,label=found
+    shown=f'#{1-value}' if kind=='top_rank' else str(value)
+    sample=(baseline or {}).get(found[0],[])
+    if len(sample)>=MIN_SAMPLE:
+        below=bisect_left(sample,value);equal=bisect_right(sample,value)-below
+        share=(below+0.5*equal)/len(sample)
+        return 10*share,True,f'{shown} {label}; above {round(100*share)}% of {'Reddit top listings' if kind=='top_rank' else source_name(p)} over {BASELINE_DAYS} days ({len(sample)} entries)'
+    if kind=='top_rank':
+        return 8/(1+(-value)/10),True,f'{shown} {label}; short history, position proxy'
+    if kind=='points':
+        return min(10,math.log10(value+1)*2.5),True,f'{value} points; short history, fixed scale'
+    return min(10,10*math.log1p(value)/math.log1p(TARGETS[kind])),True,f'{value} {label}; short history, saturation target {TARGETS[kind]}'
 
 
 def reference_time(p):
@@ -208,24 +251,44 @@ def same_story(a,b):
     return len(shared)>=3 and len(shared)/len(sa|sb)>=0.4
 
 
-def score(p, members, now, cfg=None, related=(), focus=None, series=None):
+def editorial_basis(p,members,cfg=None):
+    """Relevance, evidence and primary-source points with the flags behind them: a story's weight before timing and reach."""
     priority_=priority(p,cfg)
-    stamp,stamp_kind=reference_time(p)
-    age=max(0,(now-stamp)/3600)
-    half_life=HALF_LIFE.get(p.get('content_kind'),24)
     text=p['title']+' '+p.get('article_text',p.get('selftext',''))
     measured=bool(re.search(r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)|(?<![$\w])\d+(?:\.\d+)?B\b|(?:Parameters|Параметров):\s*\d',text,re.I))
     repository=any(bot.canonical(url) for url in [p.get('url','')]+p.get('links',[]))
     research=bot.matches(text,['paper','arXiv','research','benchmark'])
+    unknown_model=p.get('content_kind')=='model' and not bot.matches(p['title'],(cfg or {}).get('models',[]))
+    values=dict(relevance=24 if unknown_model else (6-priority_)*6,evidence=7*measured+5*repository+3*research,
+                primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0)
+    return values,dict(priority=priority_,measured=measured,repository=repository,unknown_model=unknown_model)
+
+
+def momentum_proxy(weight,baseline):
+    """Trending Now popularity of a story without a platform metric: its editorial weight against recent publications."""
+    sample=(baseline or {}).get(('publications','weight'),[])
+    if len(sample)<MIN_SAMPLE:
+        return 10*weight/50,f'editorial weight {weight}/50; short history, fixed scale'
+    share=(bisect_left(sample,weight)+0.5*(bisect_right(sample,weight)-bisect_left(sample,weight)))/len(sample)
+    return 10*share,f'editorial weight {weight}/50, above {round(100*share)}% of publications over {BASELINE_DAYS} days ({len(sample)} entries)'
+
+
+def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseline=None):
+    stamp,stamp_kind=reference_time(p)
+    age=max(0,(now-stamp)/3600)
+    half_life=HALF_LIFE.get(p.get('content_kind'),24)
+    basis,flags=editorial_basis(p,members,cfg)
+    priority_,measured,repository,unknown_model=flags['priority'],flags['measured'],flags['repository'],flags['unknown_model']
     own={publisher(m) for m in members}
     publishers=own|{publisher(m) for m in related}
-    engagement,available,metric_note=max((popularity(m) for m in members),key=lambda x:(x[0],x[1]))
-    unknown_model=p.get('content_kind')=='model' and not bot.matches(p['title'],(cfg or {}).get('models',[]))
-    values=dict(relevance=24 if unknown_model else (6-priority_)*6,freshness=25*2**(-age/half_life),
-                evidence=7*measured+5*repository+3*research,
-                coverage=min(15,max(0,len(publishers)-1)*7.5),
-                primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0,
-                engagement=engagement)
+    engagement,available,metric_note=max((popularity(m,baseline) for m in members),key=lambda x:(x[0],x[1]))
+    proxy=None
+    if not available:
+        # Not part of the editorial score (relevance is already there); only Trending Now's momentum reads it.
+        proxy,proxy_note=momentum_proxy(sum(basis.values()),baseline)
+        metric_note=f'No platform metric. Trending Now uses {proxy_note}'
+    values=dict(relevance=basis['relevance'],freshness=25*2**(-age/half_life),evidence=basis['evidence'],
+                coverage=min(15,max(0,len(publishers)-1)*7.5),primary=basis['primary'],engagement=engagement)
     if focus=='enterprise':
         # Inside Enterprise the general ladder rates nearly everything "Industry"; rank by business evidence instead.
         values['relevance'],focus_reason=enterprise_relevance(members,series)
@@ -243,9 +306,33 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None):
     if len(publishers)>1: reasons.append(f'{len(publishers)} independent platforms')
     if values['primary']: reasons.append('Official source available')
     if not reasons: reasons.append('Recent relevant news')
-    return round(sum(values.values()),1),[{ 'id':key,'label':label,'points':round(values[key],1),'max':maximum,
+    components=[{ 'id':key,'label':label,'points':round(values[key],1),'max':maximum,
         'available':available if key=='engagement' else True,
-        'explanation':notes.get(key,'')} for key,label,maximum in COMPONENTS],reasons
+        'explanation':notes.get(key,'')} for key,label,maximum in COMPONENTS]
+    if proxy is not None:next(c for c in components if c['id']=='engagement')['momentum_proxy']=round(proxy,1)
+    return round(sum(values.values()),1),components,reasons
+
+
+OWNER_GENERIC={'org','labs','lab','team','official','inc','research','models'}
+
+
+def owner_tokens(p):
+    """Namespace words of a model or repository ("deepseek-ai/X" -> {deepseek}); None for other stories."""
+    if p.get('content_kind') not in ('model','repository'):return None
+    match=re.fullmatch(r'([\w.-]+)/[\w.-]+',p['title'].strip())
+    if not match:return None
+    return {w for w in re.split(r'[^a-z0-9]+',match[1].casefold()) if len(w)>=3 and w not in OWNER_GENERIC}
+
+
+def same_owner(p,q):
+    """A fine-tune or quant (DavidAU/Qwen3.8-...) is not the base model's story: an artifact relates to
+    another story only when that story names the artifact's owner, so its news does not count as coverage."""
+    op,oq=owner_tokens(p),owner_tokens(q)
+    if not op and not oq:return True
+    if op and oq:return any(a.startswith(b) or b.startswith(a) for a in op for b in oq)
+    tokens,other=(op,q) if op else (oq,p)
+    text=' '.join([other['title'],other.get('article_text',''),other.get('selftext',''),*other.get('links',[])]).casefold()
+    return any(t in text for t in tokens)
 
 
 def related_stories(stories):
@@ -262,7 +349,7 @@ def related_stories(stories):
         found=[]
         for j in candidates-{i}:
             q,others=stories[j]
-            if abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]):
+            if abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
                 found+=[m for m in others if publisher(m) not in own]
         result.append(found)
     return result
@@ -359,7 +446,7 @@ def representative(members,chosen):
     return chosen if chosen in labs or not labs else labs[0]
 
 
-def build_items(posts,cfg,now,max_hours=8760,focus=None):
+def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None):
     posts=[english_post(p) for p in posts]
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
@@ -387,9 +474,10 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None):
               for rep,_,_ in sorted(parts,key=lambda part:part[0]['created_utc']) if rep is not lead]
         stories.append((lead,members));merged.append((first[2],also,min(reference_time(rep)[0] for rep,_,_ in parts)))
     series=enterprise_series(posts) if focus=='enterprise' else None
+    baseline=popularity_baseline(posts,now,cfg) if baseline is None else baseline
     result=[]
     for (aliases,also,news_at),(p,members),related in zip(merged,stories,related_stories(stories)):
-        number,components,reasons=score(p,members,now,cfg,related,focus,series)
+        number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline)
         stable=next(iter(sorted(k for k in aliases if k.startswith(('github.com/','huggingface.co/')))),None)
         stable=stable or next(iter(sorted(k for k in aliases if k.startswith('article:'))),None) or sorted(aliases)[0]
         sid=source_id(p)

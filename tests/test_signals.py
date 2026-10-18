@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import dashboard
+import digest
 import signals
 import xml.etree.ElementTree as ET
 
@@ -142,6 +143,43 @@ class Signals(unittest.TestCase):
         self.assertEqual(signals.raw_points(hn),233)
         self.assertTrue(next(x for x in signals.score(hn,[hn],NOW)[1] if x['id']=='engagement')['available'])
 
+    def test_popularity_is_a_percentile_within_the_source(self):
+        repo=lambda i,stars:post(id=f'g{i}',source_id='github_trending',source_name='GitHub Trending',category='repository',
+                                  content_kind='repository',observed_at=NOW-3600,metrics=[dict(kind='stars_day',value=stars,label='stars / day')])
+        history=[repo(i,100*(i+1)) for i in range(20)]
+        baseline=signals.popularity_baseline(history,NOW,CFG)
+        best,middle=signals.popularity(history[-1],baseline)[0],signals.popularity(history[9],baseline)[0]
+        self.assertGreater(best,9.5);self.assertAlmostEqual(middle,4.75)
+        # Values older than the window and other sources do not enter the sample.
+        stale=[dict(r,id='old'+r['id'],observed_at=NOW-8*86400) for r in history]
+        self.assertEqual(len(signals.popularity_baseline(history+stale,NOW,CFG)[('github_trending','stars_day')]),20)
+        # Thin history keeps the fixed saturation scale.
+        self.assertAlmostEqual(signals.popularity(repo(0,1000),{})[0],10)
+
+    def test_reddit_rss_rank_is_popularity_and_articles_get_momentum(self):
+        top=post(source='rss',subreddit='LocalLLaMA',feed_rank=0);later=post(source='rss',subreddit='LocalLLaMA',feed_rank=30)
+        self.assertEqual(signals.popularity(top)[:2],(8,True))
+        self.assertLess(signals.popularity(later)[0],signals.popularity(top)[0])
+        article=post(score=None)
+        number,parts,_=signals.score(article,[article],NOW,CFG)
+        engagement=next(x for x in parts if x['id']=='engagement')
+        # The proxy ranks Trending Now only; the editorial score keeps 0 popularity for an article.
+        self.assertFalse(engagement['available']);self.assertEqual(engagement['points'],0)
+        weights=[post(id=f'w{i}',title='Qwen benchmark '+str(i),selftext='',links=[]) for i in range(12)]
+        baseline=signals.popularity_baseline(weights+[article],NOW,CFG)
+        _,parts,_=signals.score(article,[article],NOW,CFG,baseline=baseline)
+        self.assertGreater(digest.momentum(dict(components=parts)),9)
+
+    def test_trending_now_limits_one_source_in_the_top(self):
+        item=lambda i,source,points:dict(id=str(i),source_id=source,score=points,published_at=NOW,
+                                         components=[dict(id='engagement',points=points,available=True),dict(id='coverage',points=0)])
+        rows=[item(i,'github',10-i*0.1) for i in range(6)]+[item(10,'verge',8),item(11,'decoder',1)]
+        order=[r['id'] for r in digest.diversify(rows)]
+        self.assertEqual(order[:4],['0','1','2','10'])
+        # A weak story is not promoted above a strong one of a capped source.
+        self.assertLess(order.index('3'),order.index('11'))
+        self.assertEqual([r['id'] for r in digest.diversify(rows[:6])],[str(i) for i in range(6)])
+
     def test_coverage_does_not_count_reddit_subs_or_google_twice(self):
         p=post(source='rss',subreddit='LocalLLaMA',permalink='/r/LocalLLaMA/comments/one/test/')
         q=post(source='rss',subreddit='LocalLLM',permalink='/r/LocalLLM/comments/two/test/')
@@ -197,6 +235,18 @@ class Signals(unittest.TestCase):
         self.assertEqual(merged['coverage'],2)
         self.assertEqual(len(merged['also']),1)
         self.assertEqual(items[other['title']]['coverage'],1)
+
+    def test_fine_tunes_get_no_coverage_from_base_model_news(self):
+        news=post(id='r',title='Qwen3.8 Flash Next is amazing for local use',
+                  selftext='',links=[],article_url='https://localllm.example/1')
+        model=lambda id,repo:post(id=id,title=repo,source_id='replicate_hype',category='model',content_kind='model',
+                                  date_kind='updated',filter_mode='all',url='https://huggingface.co/'+repo,
+                                  article_url='https://huggingface.co/'+repo,selftext='',links=[])
+        tune=model('d','DavidAU/Qwen3.8-Flash-Next-Turbo-Brilliance-50x-Reasoning-Instruct-GGUF')
+        base=model('q','Qwen/Qwen3.8-Flash-Next')
+        items={x['title']:x for x in signals.build_items([news,tune,base],CFG,NOW)}
+        self.assertEqual(items[tune['title']]['coverage'],1)
+        self.assertEqual(items[base['title']]['coverage'],2)
 
     def test_roundups_do_not_bridge_stories_and_artifacts_represent_groups(self):
         model=lambda id,repo:post(id=id,title=repo,source_id='hf_models',source_name='Hugging Face · Models',category='model',

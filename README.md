@@ -103,11 +103,11 @@ docker compose -f compose.yaml -f compose.release.yaml -f compose.https.yaml --p
 
 The dashboard supports a board or list view, search, topic filters, source selection per column, saved cards and light/dark themes. Saved cards and view preferences live in browser storage; saved cards still respect the selected period.
 
-Categories include Overall, Models, GitHub, Research papers, Publications, Cloud and Enterprise. There is no one-story-per-source restriction. **Why it ranks** shows each score component and available evidence.
+Categories include Overall, Models, GitHub, Research papers, Publications, Cloud and Enterprise. Day and longer periods have no one-story-per-source restriction; Trending Now softly limits one source in its top ten (below). **Why it ranks** shows each score component and available evidence.
 
 | Period | Window | Ordering and headline measure |
 |---|---|---|
-| Trending Now (default) | 12 hours | Momentum, up to 25: platform popularity + coverage |
+| Trending Now (default) | 12 hours | Momentum, up to 25: platform popularity (or an article's editorial-weight percentile) + coverage |
 | Day | 24 hours | Editorial score, up to 100, including freshness |
 | Week / Month / Year | 7 / 30 / 365 days | Significance, up to 75: editorial score without freshness |
 
@@ -115,7 +115,7 @@ Periods use `news_at`: publication time for stories, creation/publication for HF
 
 Platform sorting is available outside Trending Now: GitHub daily stars, HF trendingScore followed by likes when trendingScore is missing, and paper upvotes. These metric groups are not mixed. The selected period filters entries without changing the measurement window. In Day, GitHub/HF columns retain provider order; other periods use their own ranking measure.
 
-### Editorial score: `editorial-v3`
+### Editorial score: `editorial-v4`
 
 | Component | Maximum | Rule |
 |---|---:|---|
@@ -124,13 +124,15 @@ Platform sorting is available outside Trending Now: GitHub daily stars, HF trend
 | Evidence | 15 | Measurements +7, model/repository link +5, research/benchmark cues +3 |
 | Cross-platform coverage | 15 | +7.5 per additional independent platform, capped at 15 |
 | Primary source | 5 | An official lab or qualifying cloud source is present |
-| Popularity | 10 | Supported real platform metrics, normalized by unit |
+| Popularity | 10 | Percentile of a real platform metric within its own source over 7 days |
 
 A release headline naming a tracked model family, or that family in model trends, receives 30 relevance points. Other trending models receive 24. Enterprise uses its own evidence weights: 30 for a headline cue, 24 for adoption reported by a publication, 18 for a vendor customer story or body-only evidence, and 12 for further stories in the same vendor series after a full-weight story within seven days. Stories stay visible when their weight is reduced.
 
 Freshness half-lives: news and repositories 24 hours, papers 72 hours, models 168 hours. HF models use `createdAt`, papers their publication date, and GitHub Trending its first archived observation. Hype model dates represent the reported update.
 
-Popularity uses `min(10, 10 × ln(value + 1) / ln(target + 1))`: daily GitHub stars target 1,000; HF trendingScore or fallback lifetime likes target 1,000; paper upvotes target 300. Weekly/monthly star targets, if supplied, are 7,000/30,000. HN/Reddit use `min(10, 2.5 × log10(points + 1))`. The strongest available normalized component is used within a group; different units are never added together. These are editorial saturation settings, not percentiles. Downloads, lifetime GitHub stars and Replicate runs do not add popularity points.
+Popularity is `10 × percentile` of the story's platform metric among the same source and metric over the last 7 days of the archive (each archived entry counted once, with its latest reading): GitHub daily stars, HF trendingScore (or fallback likes), paper upvotes, Hype likes, HN/Reddit points. Reddit RSS has no upvotes, so the position in the subreddit group's `/top` listing (which Reddit orders by upvotes) is the metric. The best entry of a source's week approaches 10 and a median one gets 5, so a platform with generous raw numbers cannot fill the top. Different units are never compared. With fewer than 10 recent entries the fixed scales apply: `min(10, 10 × ln(value + 1) / ln(target + 1))` with targets 1,000 daily stars, 1,000 trendingScore/likes, 300 paper upvotes (7,000/30,000 weekly/monthly stars), and `min(10, 2.5 × log10(points + 1))` for points. Downloads, lifetime GitHub stars and Replicate runs do not add popularity points.
+
+Trending Now momentum is popularity plus coverage. An article has no platform metric, so its editorial score keeps 0 popularity, but momentum uses a proxy: the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among stories from publications that passed the filters over 7 days. In Trending Now's first ten places, after three stories from one source further ones from that source compete at half momentum; they move down past stronger stories of other sources, not past weak ones.
 
 Missing popularity is marked **no data** and contributes no points. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
 
