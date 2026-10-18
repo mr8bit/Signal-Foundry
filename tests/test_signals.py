@@ -359,6 +359,20 @@ class Signals(unittest.TestCase):
         # Two companies in one country are two stories.
         self.assertTrue(all(items[s['title']]['coverage']==1 for s in singapore))
 
+    def test_community_threads_fold_into_the_story_they_discuss(self):
+        news=post(id='n',title='DeepSeek V4.1 Flash 1017 released with open weights',source_id='techcrunch',source_name='TechCrunch AI',
+                  filter_mode='all',article_url='https://tc.example/deepseek',url='https://tc.example/deepseek',selftext='',links=[],created_utc=NOW-60*3600)
+        thread=post(id='t',source='rss',subreddit='LocalLLaMA',title='Deepseek Medieval Village (v4.1 flash 1017 high)',source_id=None,
+                    source_name=None,category='community',permalink='/r/LocalLLaMA/comments/t/',url='https://www.reddit.com/r/LocalLLaMA/comments/t/',
+                    article_url='',selftext='',links=[],score=500,created_utc=NOW-2*3600)
+        # Two days later the thread is a new report, not the same news (MERGE_WINDOW), yet still related (STORY_WINDOW).
+        items={x['id']:x for x in signals.build_items([news,thread],CFG,NOW)}
+        card=next(x for x in items.values() if x['title']==news['title'])
+        reddit=next(x for x in items.values() if x['title']==thread['title'])
+        self.assertEqual(reddit['discussion_of'],card['id']);self.assertEqual(reddit['platform'],'reddit')
+        self.assertEqual([d['id'] for d in card['discussions']],[reddit['id']])
+        self.assertNotIn('discussion_of',card)
+
     def test_shared_keys_merge_articles_only_within_days(self):
         issue=lambda id,days:post(id=id,title='[AINews] not much happened today',source_id='latent',source_name='Latent Space',
                                   category='newsletter',filter_mode='all',article_url=f'https://latent.example/{id}',url=f'https://latent.example/{id}',

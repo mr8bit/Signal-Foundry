@@ -20,6 +20,7 @@
   // Momentum is computed once, in signals.attention_parts: the story's attention (0–25), or its editorial-weight
   // proxy when it has no attention signal at all.
   function momentum(item){
+    if(item.trend_momentum!==undefined)return item.trend_momentum;
     const attention=component(item,'attention');
     return round(attention?.momentum??attention?.points??0);
   }
@@ -28,6 +29,19 @@
   function newsTime(item){return item.news_at??item.published_at}
   function inPeriod(item,period,now){const age=now-newsTime(item);return age>=0&&age<=(PERIODS[period]||PERIODS.day).hours*3600}
   function trending(item,now){return inPeriod(item,'trending',now)}
+  // Stories of a period (mirrored in digest.py). Trending Now folds community threads into the card they discuss
+  // (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh, at the highest
+  // momentum of itself and those threads, which it lists as `threads`.
+  function select(rows,period,now){
+    if(period!=='trending')return rows.filter(item=>inPeriod(item,period,now));
+    const ids=new Set(rows.map(item=>item.id));
+    return rows.flatMap(item=>{
+      if(item.discussion_of&&ids.has(item.discussion_of))return [];
+      const threads=(item.discussions||[]).filter(d=>trending(d,now));
+      if(!threads.length)return trending(item,now)?[item]:[];
+      return [{...item,threads,trend_momentum:Math.max(momentum(item),...threads.map(d=>round(d.momentum)))}];
+    });
+  }
   function headline(item,period){const order=(PERIODS[period]||PERIODS.day).order;return {...MEASURES[order],order,value:measure(item,order)}}
   function editorial(a,b){return b.score-a.score||b.published_at-a.published_at||String(a.id).localeCompare(String(b.id))}
   function rank(rows,category='all',order='editorial'){
@@ -49,10 +63,10 @@
   }
   // Every period (as in digest.py): past SOURCE_CAP stories of one source, further ones compete for the first
   // SOURCE_WINDOW places with a fifth of the measure's scale taken off, so one source cannot fill the top
-  // yet weak stories are not promoted. The platform-metric order is left as it is.
+  // yet weak stories are not promoted. All subreddits are one source (platform). The platform-metric order is left as it is.
   const SOURCE_CAP=3,SOURCE_WINDOW=10,SOURCE_PENALTY=0.2;
   function diversify(rows,order='momentum'){
-    const rest=rows.slice(),top=[],counts={},source=item=>item.source_id||item.source_name;
+    const rest=rows.slice(),top=[],counts={},source=item=>item.platform||item.source_id||item.source_name;
     const penalty=SOURCE_PENALTY*MEASURES[order].max;
     while(rest.length&&top.length<SOURCE_WINDOW){
       let best=0,bestValue=-Infinity;
@@ -65,7 +79,7 @@
     return top.concat(rest);
   }
   const api={categories,metrics,PERIODS,MEASURES,belongs,metric:validMetric,rank,diversify,momentum,significance,
-    newsTime,inPeriod,trending,headline};
+    newsTime,inPeriod,trending,select,headline};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.SignalRanking=api;
 })(globalThis);

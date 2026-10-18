@@ -20,7 +20,7 @@ SORTS=['trending','day','week','month','year','now']
 WINDOWS={'trending':(12,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
          'year':(8760,'significance'),'now':(48,'editorial')}
 MEASURES={'momentum':('momentum',25),'editorial':('score',100),'significance':('significance',75)}
-PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25. A story with no attention signal uses its editorial weight percentile, at most 10.',
+PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25. A story with no attention signal uses its editorial weight percentile, at most 10. Community threads about a story with its own card fold into that card.',
               'day':'The leading stories of the last 24 hours by editorial score, including freshness, up to 100.',
               'week':'The most significant stories of the last seven days. Significance excludes freshness, up to 75.',
               'month':'The most significant stories of the last 30 days, excluding freshness, up to 75.',
@@ -53,21 +53,37 @@ def ranked(data,category='all',period=DEFAULT_PERIOD,now=None):
     now=time.time() if now is None else now
     hours,order=WINDOWS[period]
     rows=data['items'] if category=='all' else (data.get('signal_rankings') or {}).get(category,[])
-    rows=[p for p in rows if 0<=now-news_time(p)<=hours*3600]
+    rows=select(rows,period,now)
     rows=sorted(rows,key=lambda p:(-measure(p,order),-p['score'],-p['published_at'],str(p['id'])))
     return diversify(rows,order)
 
 
+def select(rows,period,now):
+    """Stories of a period, mirrored from web/signal-ranking.js. Trending Now folds community threads into the card
+    they discuss (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh, at the
+    highest momentum of itself and those threads, which it lists as `threads`."""
+    hours=WINDOWS[period][0]
+    if period!='trending':return [p for p in rows if 0<=now-news_time(p)<=hours*3600]
+    ids={p['id'] for p in rows};result=[]
+    for p in rows:
+        if p.get('discussion_of') in ids:continue
+        threads=[d for d in p.get('discussions',[]) if trending(d,now)]
+        if threads:result.append(p|dict(threads=threads,trend_momentum=max([momentum(p)]+[round(d['momentum'],1) for d in threads])))
+        elif trending(p,now):result.append(p)
+    return result
+
+
 # Every period: past SOURCE_CAP stories of one source, further ones from that source compete for the first
 # SOURCE_WINDOW places with a fifth of the measure's scale taken off (5 of 25 momentum, 20 of 100 score,
-# 15 of 75 significance), so one source cannot fill the top yet weak stories are not promoted.
+# 15 of 75 significance), so one source cannot fill the top yet weak stories are not promoted. All subreddits
+# are one source (platform).
 # Mirrored in web/signal-ranking.js.
 SOURCE_CAP,SOURCE_WINDOW,SOURCE_PENALTY=3,10,0.2
 
 
 def diversify(rows,order='momentum'):
     rest,top,counts=list(rows),[],defaultdict(int)
-    source=lambda p:p.get('source_id') or p.get('source_name')
+    source=lambda p:p.get('platform') or p.get('source_id') or p.get('source_name')
     penalty=SOURCE_PENALTY*MEASURES[order][1]
     while rest and len(top)<SOURCE_WINDOW:
         # max keeps the first of equal values, so ties follow the existing order.
@@ -94,7 +110,9 @@ def attention_summary(p):
 
 def momentum(p):
     """Trending Now measure (max 25): the story's attention, or its editorial-weight proxy when it has no signal.
-    Computed in signals.attention_parts and mirrored by web/signal-ranking.js."""
+    Computed in signals.attention_parts and mirrored by web/signal-ranking.js; a Trending Now card with folded
+    threads carries their highest momentum (select)."""
+    if 'trend_momentum' in p:return p['trend_momentum']
     part=component(p,'attention')
     return round(part.get('momentum',part.get('points',0)),1)
 
@@ -136,7 +154,8 @@ def compact(p):
                 momentum=momentum(p),attention=attention_summary(p),significance=significance(p),news_at=iso(news_time(p)),
                 enterprise_reasons=p.get('enterprise_reasons') or [],
                 also=[dict(source=a['source'],title=a['title'],url=http_url(a.get('url'))) for a in p.get('also',[])],
-                story_links=[dict(kind=l['kind'],source=l['source'],title=l['title'],url=http_url(l['url']),published_at=iso(l['published_at'])) for l in p.get('story_links',[])],cloud_availability=p.get('cloud_availability',[]))
+                story_links=[dict(kind=l['kind'],source=l['source'],title=l['title'],url=http_url(l['url']),published_at=iso(l['published_at'])) for l in p.get('story_links',[])],cloud_availability=p.get('cloud_availability',[]),
+                threads=[dict(source=t['source'],title=t['title'],url=http_url(t['url']),momentum=round(t['momentum'],1),news_at=iso(t['news_at'])) for t in p.get('threads',[])])
 
 
 def signals_json(data,period=DEFAULT_PERIOD,category='all',limit=DEFAULT_LIMIT,now=None):
@@ -180,6 +199,7 @@ def md_item(position,p,order='editorial'):
     for kind,heading in (('merged','Also covered by'),('related','Related coverage')):
         rows=[l for l in links if l['kind']==kind]
         if rows:lines.append(f'   - {heading}: '+'; '.join(f'[{md_text(l["source"])}: {md_text(l["title"])}]({md_url(l.get("url"))})' for l in rows))
+    if p.get('threads'):lines.append('   - Discussed now in: '+'; '.join(f'[{md_text(t["source"])}: {md_text(t["title"])}]({md_url(t.get("url"))})' for t in p['threads']))
     if p.get('discussion_url') and p['discussion_url']!=p.get('url'):lines.append(f'   - Discussion: <{md_url(p["discussion_url"])}>')
     if p.get('summary'):
         summary=md_text(p['summary'])
@@ -235,7 +255,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 - Relevance: 30; freshness: 25; evidence: 15; primary source: 5; attention: 25.
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
-- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`) orders by momentum: attention, or for a story with no signal its editorial weight percentile (at most 10). In every period, after three stories of one source further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
+- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`) orders by momentum: attention, or for a story with no signal its editorial weight percentile (at most 10). Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 12 hours, at the highest momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date. Hype model dates represent updates, not original model creation.
 '''
@@ -264,8 +284,9 @@ def static_signal(p,i,order='momentum'):
 
 
 def static_also(p):
-    if not p.get('also'):return ''
-    return '<p class="card-also"><span>Also covered by:</span> '+', '.join(f'<a href="{e(http_url(a.get("url")))}" title="{e(a["title"])}">{e(a["source"])}</a>' for a in p['also'])+'</p>'
+    threads=p.get('threads',[])
+    also=('<p class="card-also"><span>Also covered by:</span> '+', '.join(f'<a href="{e(http_url(a.get("url")))}" title="{e(a["title"])}">{e(a["source"])}</a>' for a in p['also'])+'</p>') if p.get('also') else ''
+    return also+(f'<p class="card-also"><span>Discussed in {len(threads)} thread{"s" if len(threads)>1 else ""}:</span> '+', '.join(f'<a href="{e(http_url(t["url"]))}" title="{e(t["title"])}">{e(t["source"])}</a>' for t in threads)+'</p>' if threads else '')
 
 
 def static_cloud(p):

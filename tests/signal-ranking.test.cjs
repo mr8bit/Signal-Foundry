@@ -72,3 +72,18 @@ test('Trending Now: momentum comes from attention and one source cannot fill the
   assert.deepEqual(order.slice(0,4),['g0','g1','g2','article']);
   assert.ok(order.indexOf('g3')<order.indexOf('weak'));
 });
+// Shared fixture with tests/test_digest.py: threads fold into the story they discuss; Reddit is one source.
+test('Trending Now folds community threads into their story and limits Reddit as a whole',()=>{
+  const row=(id,hours,value,extra={})=>({id,score:50,published_at:NOW-hours*H,news_at:NOW-hours*H,source_id:id,
+    components:[{id:'attention',points:value,momentum:value}],...extra});
+  const thread=(id,hours,value)=>row(id,hours,value,{column:'community',platform:'reddit',discussion_of:'release'});
+  const threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',20,24)];
+  const rows=[row('release',30,4,{discussions:threads.map(t=>({id:t.id,title:t.id,source:'r/x',url:'https://x',
+      news_at:t.news_at,momentum:t.components[0].momentum}))}),...threads,
+    ...[19,18,17,16].map((v,i)=>row('r'+(i+1),1,v,{column:'community',platform:'reddit',source_id:'reddit:sub'+i})),row('other',1,15)];
+  const order=ranking.rank(ranking.select(rows,'trending',NOW),'all','momentum');
+  assert.deepEqual(order.map(x=>x.id),['release','r1','r2','r3','other','r4']);
+  assert.equal(ranking.momentum(order[0]),25);
+  assert.deepEqual(order[0].threads.map(t=>t.id),['t1','t2']);
+  assert.deepEqual(ranking.select(rows,'day',NOW).map(x=>x.id).filter(id=>id.startsWith('t')),['t1','t2','t-old']);
+});

@@ -103,7 +103,7 @@ docker compose -f compose.yaml -f compose.release.yaml -f compose.https.yaml --p
 
 The dashboard supports a board or list view, search, topic filters, source selection per column, saved cards and light/dark themes. Saved cards and view preferences live in browser storage; saved cards still respect the selected period.
 
-Categories include Overall, Models, GitHub, Research papers, Publications, Cloud and Enterprise. In every period, after three stories of one source further ones from that source compete for the top ten with a fifth of the measure's scale taken off (5 momentum, 20 score, 15 significance): they move down past stronger stories of other sources, not past weak ones. Platform-metric ordering is not limited.
+Categories include Overall, Models, GitHub, Research papers, Publications, Cloud and Enterprise. In every period, after three stories of one source (all subreddits count as one source, Reddit) further ones from that source compete for the top ten with a fifth of the measure's scale taken off (5 momentum, 20 score, 15 significance): they move down past stronger stories of other sources, not past weak ones. Platform-metric ordering is not limited.
 
 | Period | Window | Ordering and headline measure |
 |---|---|---|
@@ -144,6 +144,8 @@ Each family keeps its best channel and the families combine as `25 × (1 − Π(
 The collector records readings after each collection and spends a time budget (`attention.budget_seconds`) on lookups, one kind at a time: most-read lists, Substack, Google News, HF, GitHub, then HN, each with its own TTL and per-cycle limit. Builds only read the store. `GITHUB_TOKEN` (no scopes) raises the GitHub API limit from 60 to 5,000 requests per hour; without it few repositories are looked up per cycle. Pages for most-read lists are set in `attention.most_read`; Substack sources in `attention.substack_sources`.
 
 Trending Now momentum is the story's attention. A story with no attention signal at all is ranked by the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among recent publications, at most 10; this proxy never enters the editorial score.
+
+Community threads about a story that has its own card (related coverage of a lab post, news report, model or repository) are its discussion rather than separate news: "DeepSeek V4.1 Flash 1017 - GTA6 trailer" belongs to the release. In Trending Now such threads are hidden and the story's card is shown while any of them is from the last 12 hours, even when the card itself is older, at the highest momentum of the card and those threads; the card lists them under **Discussed in** (`threads` in the API). The card is the official post, then a news report, then the model or repository, then a newsletter. Other periods list threads as they are.
 
 A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
 

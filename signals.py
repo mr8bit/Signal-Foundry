@@ -514,7 +514,8 @@ class StoryIndex:
 
 
 def related_stories(stories,retelling=None):
-    """Other outlets carrying the same story within STORY_WINDOW; they raise coverage but are not merged."""
+    """Other outlets carrying the same story within STORY_WINDOW; they raise coverage but are not merged.
+    Per story: (related reports, indices of the related stories)."""
     articles=[p for p,_ in stories if not p.get('content_kind')]
     retelling=retelling or StoryIndex(articles)
     # Articles by time, so each one is compared only with the stories inside its window.
@@ -529,7 +530,7 @@ def related_stories(stories,retelling=None):
         versions,stems=prints[i]
         candidates=set().union(*(index[t] for t in versions|stems)) if versions|stems else set()
         own={publisher(m) for m in members}
-        found=[]
+        found,linked=[],[]
         retold=set()
         if not p.get('content_kind'):
             t=reference_time(p)[0]
@@ -539,8 +540,8 @@ def related_stories(stories,retelling=None):
         for j in (candidates|retold)-{i}:
             q,others=stories[j]
             if j in retold or abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
-                found+=[m for m in others if publisher(m) not in own]
-        result.append(found)
+                found+=[m for m in others if publisher(m) not in own];linked.append(j)
+        result.append((found,linked))
     return result
 
 
@@ -706,7 +707,9 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
     series=enterprise_series(posts) if focus=='enterprise' else None
     baseline=(popularity_baseline(posts,now,cfg)|channel_baseline(readings)) if baseline is None else baseline
     result=[]
-    for (aliases,also,news_at),(p,members),related in zip(merged,stories,related_stories(stories,StoryIndex([p for p,_ in stories if not p.get('content_kind')],vectors))):
+    links=[]
+    for (aliases,also,news_at),(p,members),(related,linked) in zip(merged,stories,related_stories(stories,StoryIndex([p for p,_ in stories if not p.get('content_kind')],vectors))):
+        links.append(linked)
         number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline,readings)
         stable=next(iter(sorted(k for k in aliases if k.startswith(('github.com/','huggingface.co/')))),None)
         stable=stable or next(iter(sorted(k for k in aliases if k.startswith('article:'))),None) or sorted(aliases)[0]
@@ -718,13 +721,15 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
         if not url or urlsplit(url).scheme not in ('http','https'): url=discussion
         category=p.get('category','community')
         column={'repository':'repos','model':'models','paper':'papers'}.get(category) or ('community' if category=='community' or sid=='hn' else 'labs' if category in ('lab','newsletter','cloud') else 'media')
+        # Subreddits are one platform: Trending Now limits Reddit as a whole, not each subreddit.
+        platform='reddit' if p.get('subreddit') or p.get('permalink') else sid
         summary=bot.excerpt(p.get('article_text') or p.get('selftext',''),650)
         if sid=='hn' and p.get('selftext','').startswith('Article URL:'): summary=''
         signal_categories,signal_metrics=ranking_metadata(members)
         result.append(dict(id=sha256(stable.encode()).hexdigest()[:20],title=p['title'],
             summary=summary,
             description_kind=('Description from Replicate Hype' if p.get('hype_origin') else 'Model metadata' if p.get('content_kind')=='model' else 'Paper abstract' if p.get('content_kind')=='paper' else 'Repository description' if p.get('content_kind')=='repository' else 'Article excerpt' if p.get('article_text') else 'Feed description'),
-            source_id=sid,source_name=source_name(p),category=category,column=column,
+            source_id=sid,source_name=source_name(p),platform=platform,category=category,column=column,
             signal_categories=signal_categories,signal_metrics=signal_metrics,
             cloud_availability=availability_for(members),
             enterprise_reasons=list(dict.fromkeys(reason for member in members for reason in enterprise_reasons(member))),
@@ -739,4 +744,23 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
             news_at=news_at,
             raw_score=raw_points(p),metrics=p.get('metrics',[]),date_kind=p.get('date_kind','published'),
             original_published_at=p.get('original_published_at'),provider_rank=p.get('feed_rank') if p.get('date_kind')=='trend' else None,saved=False))
+    fold_discussions(result,links)
     return sorted(result,key=lambda x:(-x['score'],-x['published_at']))
+
+
+# The card a community thread is folded into: the official post, then a news report, then the model or repository.
+ANCHOR_ORDER={'lab':0,'cloud':0,'news':1,'model':2,'repository':2,'paper':2,'newsletter':3}
+
+
+def fold_discussions(result,links):
+    """Community threads about a story that has its own card ("DeepSeek V4.1 Flash - GTA6 trailer" next to the
+    release news) are its discussion, not separate news. Trending Now shows the card while any of its threads
+    is fresh, at the highest momentum among them, and hides the threads (web/signal-ranking.js, digest.py)."""
+    for x,linked in zip(result,links):
+        anchors=[result[j] for j in linked if result[j]['column']!='community']
+        if x['column']!='community' or not anchors:continue
+        anchor=min(anchors,key=lambda a:(ANCHOR_ORDER.get(a['category'],4),a['news_at'],a['id']))
+        x['discussion_of']=anchor['id']
+        attention=next(c for c in x['components'] if c['id']=='attention')
+        anchor.setdefault('discussions',[]).append(dict(id=x['id'],title=x['title'],source=x['source_name'],
+            url=x['discussion_url'] or x['url'],news_at=x['news_at'],momentum=attention['momentum']))

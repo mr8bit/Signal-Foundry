@@ -67,6 +67,23 @@ class Digest(unittest.TestCase):
         value=json.loads(digest.signals_json(data(rows),'week',now=now))
         self.assertEqual((value['order'],value['period_hours'],value['items'][0]['significance']),('significance',168,59.6))
 
+    def test_trending_folds_threads_and_limits_reddit_as_a_whole(self):
+        # Same fixture as tests/signal-ranking.test.cjs.
+        H,D=3600,86400;now=100*D
+        row=lambda id,hours,value,**extra:item(id,50,**dict(published_at=now-hours*H,news_at=now-hours*H,source_id=id,
+            components=[dict(id='attention',points=value,max=25,momentum=value)])|extra)
+        thread=lambda id,hours,value:row(id,hours,value,column='community',platform='reddit',discussion_of='release')
+        threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',20,24)]
+        rows=[row('release',30,4,discussions=[dict(id=t['id'],title=t['id'],source='r/x',url='https://x',news_at=t['news_at'],
+                                                   momentum=t['components'][0]['momentum']) for t in threads]),*threads,
+              *[row(f'r{i+1}',1,v,column='community',platform='reddit',source_id=f'reddit:sub{i}') for i,v in enumerate([19,18,17,16])],
+              row('other',1,15)]
+        order=digest.ranked(data(rows),'all','trending',now)
+        self.assertEqual([p['id'] for p in order],['release','r1','r2','r3','other','r4'])
+        self.assertEqual(digest.momentum(order[0]),25);self.assertEqual([t['id'] for t in order[0]['threads']],['t1','t2'])
+        self.assertEqual([p['id'] for p in digest.ranked(data(rows),'all','day',now) if p['id'].startswith('t')],['t1','t2','t-old'])
+        self.assertIn('Discussed now in: [r/x: t1]',digest.markdown(data(rows),'trending',now=now))
+
     def test_query_validation(self):
         self.assertEqual(digest.query({}),('now','all',20))
         self.assertEqual(digest.query({'sort':['week'],'category':['papers'],'limit':['5']}),('week','papers',5))
