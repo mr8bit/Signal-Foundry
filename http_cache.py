@@ -130,9 +130,10 @@ class HTTPCache:
         return max(row['retry_at'] if row else 0,record['next_at'] if record else 0,record['retry_at'] if record else 0)
 
     def host_interval(self,host):
+        # The most specific listed domain sets its own pause, so an API host can be paced faster than feeds.
         matches=[(len(domain),seconds) for domain,seconds in self.policy['host_min_intervals'].items()
                  if host==domain or host.endswith('.'+domain)]
-        return max(self.policy['min_host_interval_seconds'],max(matches)[1] if matches else 0)
+        return max(matches)[1] if matches else self.policy['min_host_interval_seconds']
 
     def reset_failures(self,db,host):
         db.execute("UPDATE hosts SET rate_failures=0,retry_at=0,error='',status=200 WHERE host=?",(host,))

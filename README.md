@@ -107,7 +107,7 @@ Categories include Overall, Models, GitHub, Research papers, Publications, Cloud
 
 | Period | Window | Ordering and headline measure |
 |---|---|---|
-| Trending Now (default) | 12 hours | Momentum, up to 25: platform popularity (or an article's editorial-weight percentile) + coverage |
+| Trending Now (default) | 12 hours | Momentum, up to 25: the story's attention (editorial-weight proxy, at most 10, when it has no attention signal) |
 | Day | 24 hours | Editorial score, up to 100, including freshness |
 | Week / Month / Year | 7 / 30 / 365 days | Significance, up to 75: editorial score without freshness |
 
@@ -115,28 +115,39 @@ Periods use `news_at`: publication time for stories, creation/publication for HF
 
 Platform sorting is available outside Trending Now: GitHub daily stars, HF trendingScore followed by likes when trendingScore is missing, and paper upvotes. These metric groups are not mixed. The selected period filters entries without changing the measurement window. In Day, GitHub/HF columns retain provider order; other periods use their own ranking measure.
 
-### Editorial score: `editorial-v5`
+### Editorial score: `editorial-v6`
 
 | Component | Maximum | Rule |
 |---|---:|---|
 | Relevance | 30 | Model releases: 30; measured local inference: 24; tools: 18; research: 12; industry: 6 |
 | Freshness | 25 | `25 × 2^(-age_hours / half_life_hours)` |
 | Evidence | 15 | Measurements +7, model/repository link +5, research/benchmark cues +3. For a model or repository its own name, parameter count and own URL are not evidence |
-| Cross-platform coverage | 15 | +7.5 per additional independent platform, capped at 15 |
 | Primary source | 5 | An official lab or qualifying cloud source is present |
-| Popularity | 10 | Percentile of a real platform metric within its own source over 7 days |
+| Attention | 25 | Platform, discussion and reach signals, each a percentile against its own last 7 days (below) |
 
 A release headline naming a tracked model family, or that family in model trends, receives 30 relevance points. Other trending models, and quants, merges or uncensored fine-tunes of a tracked family (GGUF, AWQ, GPTQ, EXL2/3, MLX, abliterated, imatrix, LoRA…), receive 18. Enterprise uses its own evidence weights: 30 for a headline cue, 24 for adoption reported by a publication, 18 for a vendor customer story or body-only evidence, and 12 for further stories in the same vendor series after a full-weight story within seven days. Stories stay visible when their weight is reduced.
 
 Freshness half-lives: news and repositories 24 hours, papers 72 hours, models 168 hours; a reported update (Hype) 24 hours, since an update is not a release. HF models use `createdAt`, papers their publication date, and GitHub Trending its first archived observation. Hype model dates represent the reported update.
 
-Popularity is `10 × percentile` of the story's platform metric among the same source and metric over the last 7 days of the archive (each archived entry counted once, with its latest reading): GitHub daily stars, HF trendingScore (or fallback likes), paper upvotes, Hype likes, HN/Reddit points. Reddit RSS has no upvotes, so the position in the subreddit group's `/top` listing (which Reddit orders by upvotes) is the metric. The best entry of a source's week approaches 10 and a median one gets 5, so a platform with generous raw numbers cannot fill the top. Different units are never compared. With fewer than 10 recent entries the fixed scales apply: `min(10, 10 × ln(value + 1) / ln(target + 1))` with targets 1,000 daily stars, 1,000 trendingScore/likes, 300 paper upvotes (7,000/30,000 weekly/monthly stars), and `min(10, 2.5 × log10(points + 1))` for points. Downloads, lifetime GitHub stars and Replicate runs do not add popularity points.
+### Attention
 
-Trending Now momentum is popularity plus coverage. An article has no platform metric, so its editorial score keeps 0 popularity, but momentum uses a proxy: the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among stories from publications that passed the filters over 7 days.
+Attention (0–25) joins every signal of interest in a story. Each channel is ranked against its own values over the last 7 days, so raw units of different platforms are never compared; a channel with fewer than 10 recent values uses a fixed log scale. Zero means "not seen" and never enters a sample.
 
-Missing popularity is marked **no data** and contributes no points. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
+| Family | Channels | Where the data comes from |
+|---|---|---|
+| Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, HN/Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in `data/attention.sqlite3`, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
+| Discussion | HN points for the story's URL | hnrss items and HN Algolia lookups |
+| Reach | Independent platforms in our sources; other outlets reporting the same headline in Google News within 48 hours (the article's own outlet excluded) | Story grouping and Google News RSS |
 
-The service does not calculate its own growth rate from a single snapshot. Daily GitHub stars come directly from Trending. Descriptions are source excerpts or metadata, not AI-written summaries. Historical coverage depends on how long the archive has been collecting.
+Each family keeps its best channel and the families combine as `25 × (1 − Π(1 − share))`: one strong signal counts fully, several add up, the total never exceeds 25. The score breakdown and the JSON `attention` field list every channel with its family, share and note.
+
+The collector records readings after each collection and spends a time budget (`attention.budget_seconds`) on lookups, one kind at a time: most-read lists, Substack, Google News, HF, GitHub, then HN, each with its own TTL and per-cycle limit. Builds only read the store. `GITHUB_TOKEN` (no scopes) raises the GitHub API limit from 60 to 5,000 requests per hour; without it few repositories are looked up per cycle. Pages for most-read lists are set in `attention.most_read`; Substack sources in `attention.substack_sources`.
+
+Trending Now momentum is the story's attention. A story with no attention signal at all is ranked by the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among recent publications, at most 10; this proxy never enters the editorial score.
+
+A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
+
+Growth per day is measured only from stored readings at least six hours apart within 48 hours; a single snapshot never claims a rate. Daily GitHub stars from Trending are used as supplied. Descriptions are source excerpts or metadata, not AI-written summaries. Historical coverage depends on how long the archive has been collecting.
 
 ### Deduplication and related coverage
 

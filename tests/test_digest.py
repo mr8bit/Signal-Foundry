@@ -20,7 +20,7 @@ def item(id,score,hours=1,column='media',**changes):
     p=dict(id=id,title=f'Story {id}',url=f'https://example.com/{id}',summary='Summary text',source_name='Example',
            sources=['Example'],related_sources=[],column=column,topic='Industry',published_at=NOW-hours*3600,score=score,
            reasons=['Recent relevant news'],metrics=[],coverage=1,domain='example.com',raw_score=None,
-           components=[dict(id='engagement',label='Popularity',points=0,max=10,available=False)])
+           components=[dict(id='attention',label='Attention',points=0,max=25,available=True,channels=[])])
     p.update(changes);return p
 
 
@@ -48,8 +48,8 @@ class Digest(unittest.TestCase):
     def test_tabs_match_dashboard_period_model(self):
         # Same fixture as tests/signal-ranking.test.cjs.
         H,D=3600,86400;now=100*D
-        parts=lambda engagement,coverage,freshness:[dict(id='engagement',points=engagement or 0,max=10,available=engagement is not None),
-                                                   dict(id='coverage',points=coverage,max=15),dict(id='freshness',points=freshness,max=25)]
+        parts=lambda engagement,coverage,freshness:[dict(id='attention',points=(engagement or 0)+coverage,max=25,momentum=(engagement or 0)+coverage),
+                                                   dict(id='freshness',points=freshness,max=25)]
         rows=[item('hot',40,published_at=now-3*H,news_at=now-3*H,components=parts(6,15,22)),
               item('quiet-new',70,published_at=now-2*H,news_at=now-2*H,components=parts(None,0,24)),
               item('afternoon',65,published_at=now-14*H,news_at=now-14*H,components=parts(9,7.5,17)),
@@ -78,7 +78,9 @@ class Digest(unittest.TestCase):
         value=json.loads(digest.signals_json(data(),limit=2,now=NOW))
         self.assertEqual(value['total'],3);self.assertEqual([x['id'] for x in value['items']],['b','c'])
         self.assertRegex(value['items'][0]['published_at'],r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
-        self.assertIsNone(value['items'][0]['score_components']['engagement'])
+        # No attention signal is 0 with no channels listed, never an invented value.
+        self.assertEqual(value['items'][0]['score_components']['attention'],0)
+        self.assertEqual(value['items'][0]['attention']['channels'],[])
 
     def test_markdown_escapes_titles_and_unsafe_urls(self):
         hostile=item('x',90,title='Break ](javascript:alert(1)) *bold*\nnext',url='javascript:alert(1)')

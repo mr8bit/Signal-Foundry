@@ -86,7 +86,8 @@ def parse_site_feed(data, source):
     except ET.ParseError:
         raise RuntimeError('Invalid feed XML (possibly an HTML block page)') from None
     ns = {'a': 'http://www.w3.org/2005/Atom', 'content': 'http://purl.org/rss/1.0/modules/content/',
-          'dc': 'http://purl.org/dc/elements/1.1/'}
+          'dc': 'http://purl.org/dc/elements/1.1/', 'slash': 'http://purl.org/rss/1.0/modules/slash/',
+          'thr': 'http://purl.org/syndication/thread/1.0'}
     atom = root.tag == '{http://www.w3.org/2005/Atom}feed'
     if atom:
         entries = root.findall('a:entry', ns)
@@ -118,6 +119,10 @@ def parse_site_feed(data, source):
         item = post(source, title, url, stamp, content, rank)
         if item:
             item=normalize_note(item)
+            # WordPress (slash) and Atom threading (thr) feeds carry the article's comment count.
+            comments=(entry.findtext('slash:comments', '', ns) or entry.findtext('thr:total', '', ns)).strip()
+            if comments.isdigit():
+                item['metrics']=[dict(kind='comments',value=int(comments),label='comments')]
             if source['id'] == 'hn':
                 item['discussion_url'] = next((x for x in item['links'] if 'news.ycombinator.com/item?' in x), '')
             result.append(item)

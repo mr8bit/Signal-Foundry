@@ -131,8 +131,9 @@ class Signals(unittest.TestCase):
         p=post();score,parts,reasons=signals.score(p,[p],NOW)
         self.assertTrue(0<=score<=100)
         self.assertEqual(score,round(sum(x['points'] for x in parts),1))
-        raw=next(x for x in parts if x['id']=='engagement')
-        self.assertFalse(raw['available']);self.assertEqual(raw['points'],0)
+        # No attention signal: 0 points, and the breakdown says so rather than inventing one.
+        raw=next(x for x in parts if x['id']=='attention')
+        self.assertEqual(raw['points'],0);self.assertEqual(raw['channels'],[])
         self.assertIn('Includes measurements',reasons)
         for x in parts:self.assertTrue(0<=x['points']<=x['max'])
 
@@ -141,7 +142,8 @@ class Signals(unittest.TestCase):
         self.assertGreater(fresh,old)
         hn=post(source_id='hn',selftext='Article URL: https://example.com\nPoints: 233\n# Comments: 75')
         self.assertEqual(signals.raw_points(hn),233)
-        self.assertTrue(next(x for x in signals.score(hn,[hn],NOW)[1] if x['id']=='engagement')['available'])
+        attention=next(x for x in signals.score(hn,[hn],NOW)[1] if x['id']=='attention')
+        self.assertGreater(attention['points'],0);self.assertEqual(attention['channels'][0]['channel'],'native')
 
     def test_popularity_is_a_percentile_within_the_source(self):
         repo=lambda i,stars:post(id=f'g{i}',source_id='github_trending',source_name='GitHub Trending',category='repository',
@@ -162,9 +164,9 @@ class Signals(unittest.TestCase):
         self.assertLess(signals.popularity(later)[0],signals.popularity(top)[0])
         article=post(score=None)
         number,parts,_=signals.score(article,[article],NOW,CFG)
-        engagement=next(x for x in parts if x['id']=='engagement')
-        # The proxy ranks Trending Now only; the editorial score keeps 0 popularity for an article.
-        self.assertFalse(engagement['available']);self.assertEqual(engagement['points'],0)
+        attention=next(x for x in parts if x['id']=='attention')
+        # The proxy ranks Trending Now only; the editorial score keeps 0 attention for an article without signals.
+        self.assertEqual(attention['points'],0)
         weights=[post(id=f'w{i}',title='Qwen benchmark '+str(i),selftext='',links=[]) for i in range(12)]
         baseline=signals.popularity_baseline(weights+[article],NOW,CFG)
         _,parts,_=signals.score(article,[article],NOW,CFG,baseline=baseline)
@@ -172,7 +174,7 @@ class Signals(unittest.TestCase):
 
     def test_trending_now_limits_one_source_in_the_top(self):
         item=lambda i,source,points:dict(id=str(i),source_id=source,score=points,published_at=NOW,
-                                         components=[dict(id='engagement',points=points,available=True),dict(id='coverage',points=0)])
+                                         components=[dict(id='attention',points=points,momentum=points)])
         rows=[item(i,'github',10-i*0.1) for i in range(6)]+[item(10,'verge',8),item(11,'decoder',1)]
         order=[r['id'] for r in digest.diversify(rows)]
         self.assertEqual(order[:4],['0','1','2','10'])
@@ -183,12 +185,14 @@ class Signals(unittest.TestCase):
     def test_coverage_does_not_count_reddit_subs_or_google_twice(self):
         p=post(source='rss',subreddit='LocalLLaMA',permalink='/r/LocalLLaMA/comments/one/test/')
         q=post(source='rss',subreddit='LocalLLM',permalink='/r/LocalLLM/comments/two/test/')
-        parts=signals.score(p,[p,q],NOW)[1]
-        self.assertEqual(next(x for x in parts if x['id']=='coverage')['points'],0)
+        attention=lambda members:next(x for x in signals.score(p,members,NOW)[1] if x['id']=='attention')['points']
+        # A second subreddit is the same platform: it adds no reach.
+        self.assertEqual(attention([p,q]),attention([p]))
         self.assertEqual(signals.publisher(post(source_id='google')),signals.publisher(post(source_id='deepmind')))
         official=post(source_id='openai',category='lab',article_url='https://openai.com/news/test')
         parts=signals.score(p,[p,official],NOW)[1]
-        self.assertEqual(next(x for x in parts if x['id']=='coverage')['points'],7.5)
+        # Two independent platforms add reach (1/3) on top of the thread's own platform signal.
+        self.assertGreater(next(x for x in parts if x['id']=='attention')['points'],attention([p]))
         self.assertEqual(next(x for x in parts if x['id']=='primary')['points'],5)
 
     def test_trend_freshness_uses_original_or_first_seen_date(self):
@@ -210,7 +214,7 @@ class Signals(unittest.TestCase):
         unknown=dict(known,title='someone/humanizer')
         parts=lambda p:{x['id']:x['points'] for x in signals.score(p,[p],NOW,CFG)[1]}
         self.assertEqual(parts(known)['relevance'],30);self.assertEqual(parts(unknown)['relevance'],18)
-        self.assertEqual(parts(known)['engagement'],10)
+        self.assertEqual(parts(known)['attention'],25)
         # A quant or uncensored fine-tune of a tracked family is not its release.
         for title in ('DavidAU/Qwen3.8-Flash-Abliterated-GGUF','turboderp/GLM-5.3-Flash-exl3','unsloth/Qwen3.8-27B-GGUF','realrebelai/FLUX-3-Image-Klein_GGUFs'):
             self.assertEqual(parts(dict(known,title=title))['relevance'],18,title)

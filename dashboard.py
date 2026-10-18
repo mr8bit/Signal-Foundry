@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 from email.utils import formatdate
 import bot
 from cloud_news import prepare_cloud_posts
-from signals import build_items, popularity_baseline, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
+import attention
+from signals import build_items, popularity_baseline, channel_baseline, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
 
 PERIODS={'now':48,'day':24,'week':168,'month':720,'year':8760}
 
@@ -32,20 +33,22 @@ def archive_posts(posts,path='data/news.sqlite3'):
         return [json.loads(payload)|{'first_seen':first} for payload,first in db.execute('SELECT payload,first_seen FROM news')]
 
 
-def dataset(posts,cfg,statuses,now=None):
+def dataset(posts,cfg,statuses,now=None,readings=None):
     now=now or time.time()
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
     posts,pending=prepare_cloud_posts(posts,cfg,now)
     # One popularity baseline for every collection, so a subset does not shrink a source's history.
-    baseline=popularity_baseline(posts,now,cfg)
-    items=build_items(posts,cfg,now,baseline=baseline)
+    # Attention readings are only read here; the collector records them (attention.refresh).
+    readings=attention.load(now) if readings is None else readings
+    baseline=popularity_baseline(posts,now,cfg)|channel_baseline(readings)
+    items=build_items(posts,cfg,now,baseline=baseline,readings=readings)
     # Rank each collection independently: a newsletter linking many models must
     # not replace model cards through the mixed feed's cross-source deduplication.
-    rankings={category:build_items([p for p in posts if SIGNAL_CATEGORIES.get(p.get('category'))==category],cfg,now,baseline=baseline)
+    rankings={category:build_items([p for p in posts if SIGNAL_CATEGORIES.get(p.get('category'))==category],cfg,now,baseline=baseline,readings=readings)
               for category in ('models','repos','papers','media')}
-    rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',baseline=baseline)
-    rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,baseline=baseline)
+    rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',baseline=baseline,readings=readings)
+    rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,baseline=baseline,readings=readings)
     return dict(generated_at=now,items=items,signal_rankings=rankings,statuses=statuses,cloud_pending=pending,
         sources=[dict(id=s['id'],name=s['name'],category=s['category'],categories=s.get('categories',[s['category']])) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[
             dict(id='reddit:'+s,name='r/'+s,category='community') for s in cfg['subreddits']],

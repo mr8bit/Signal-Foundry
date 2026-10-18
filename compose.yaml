@@ -30,6 +30,10 @@ services:
   worker:
     <<: *service
     command: [python, collector.py]
+    environment:
+      <<: *environment
+      # Optional: a token without scopes raises the GitHub API limit from 60 to 5000 requests per hour.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     mem_limit: 512m
     cpus: 1.0
     healthcheck:

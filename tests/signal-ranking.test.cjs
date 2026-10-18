@@ -42,7 +42,7 @@ test('merged stories retain multiple categories; invalid or absent metrics stay 
 });
 // Shared fixture with tests/test_digest.py: both implementations must select and order identically.
 const H=3600,D=86400,NOW=100*D;
-const parts=(engagement,coverage,freshness)=>[{id:'engagement',points:engagement,available:engagement!==null},{id:'coverage',points:coverage},{id:'freshness',points:freshness}];
+const parts=(engagement,coverage,freshness)=>[{id:'attention',points:(engagement??0)+coverage,momentum:(engagement??0)+coverage},{id:'freshness',points:freshness}];
 const FIXTURE=[
   {id:'hot',score:40,published_at:NOW-3*H,news_at:NOW-3*H,components:parts(6,15,22)},
   {id:'quiet-new',score:70,published_at:NOW-2*H,news_at:NOW-2*H,components:parts(null,0,24)},
@@ -62,10 +62,10 @@ test('the card headline is the measure the tab sorts by',()=>{
   assert.deepEqual(ranking.headline(FIXTURE[0],'day'),{name:'Score',max:100,order:'editorial',value:40});
   assert.deepEqual(ranking.headline(FIXTURE[4],'month'),{name:'Significance',max:75,order:'significance',value:59.6});
 });
-test('Trending Now: articles use momentum_proxy and one source cannot fill the top',()=>{
+test('Trending Now: momentum comes from attention and one source cannot fill the top',()=>{
   const row=(id,source,points,extra={})=>({id,source_id:source,score:points,published_at:100,
-    components:[{id:'engagement',points,available:true,...extra},{id:'coverage',points:0}]});
-  const article=row('article','verge',0,{available:false,momentum_proxy:8});
+    components:[{id:'attention',points,momentum:points,...extra}]});
+  const article=row('article','verge',0,{momentum:8});
   assert.equal(ranking.momentum(article),8);
   const rows=[0,1,2,3,4,5].map(i=>row('g'+i,'github',10-i*0.1)).concat([article,row('weak','decoder',1)]);
   const order=ranking.rank(rows,'all','momentum').map(x=>x.id);

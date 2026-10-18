@@ -20,7 +20,7 @@ SORTS=['trending','day','week','month','year','now']
 WINDOWS={'trending':(12,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
          'year':(8760,'significance'),'now':(48,'editorial')}
 MEASURES={'momentum':('momentum',25),'editorial':('score',100),'significance':('significance',75)}
-PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum (popularity within the story\'s own source plus coverage, up to 25). Articles without a platform metric use the percentile of their editorial weight as popularity.',
+PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25. A story with no attention signal uses its editorial weight percentile, at most 10.',
               'day':'The leading stories of the last 24 hours by editorial score, including freshness, up to 100.',
               'week':'The most significant stories of the last seven days. Significance excludes freshness, up to 75.',
               'month':'The most significant stories of the last 30 days, excluding freshness, up to 75.',
@@ -85,23 +85,18 @@ def component(p,key):
     return next((c for c in p.get('components',[]) if c['id']==key),{})
 
 
-def momentum_parts(p):
-    """What momentum is made of, so an agent can reproduce it: popularity, its basis and coverage."""
-    engagement=component(p,'engagement')
-    platform=engagement.get('available',True)
-    return dict(popularity=engagement.get('points',0) if platform else engagement.get('momentum_proxy',0),
-                basis='platform metric' if platform else 'editorial weight percentile',
-                coverage=component(p,'coverage').get('points',0),note=engagement.get('explanation',''))
+def attention_summary(p):
+    """Attention (0–25) and Trending Now momentum with the channels behind them, so an agent can reproduce both."""
+    part=component(p,'attention')
+    return dict(points=part.get('points',0),momentum=momentum(p),note=part.get('explanation',''),
+                channels=[{k:c[k] for k in ('family','channel','label','share','note')} for c in part.get('channels',[])])
 
 
 def momentum(p):
-    """Platform popularity plus cross-outlet coverage, both taken from the score breakdown (max 25).
-
-    A story without a platform metric (an article) uses its momentum_proxy: editorial weight as a percentile
-    of recent publications. Mirrored in web/signal-ranking.js."""
-    engagement=component(p,'engagement')
-    popular=engagement.get('points',0) if engagement.get('available',True) else engagement.get('momentum_proxy',0)
-    return round(popular+component(p,'coverage').get('points',0),1)
+    """Trending Now measure (max 25): the story's attention, or its editorial-weight proxy when it has no signal.
+    Computed in signals.attention_parts and mirrored by web/signal-ranking.js."""
+    part=component(p,'attention')
+    return round(part.get('momentum',part.get('points',0)),1)
 
 
 def significance(p):
@@ -138,7 +133,7 @@ def compact(p):
                 reasons=p.get('reasons',[]),summary=p.get('summary',''),
                 metrics=[dict(kind=m['kind'],value=m['value'],label=m['label']) for m in p.get('metrics',[])],
                 score_components={c['id']:(c['points'] if c.get('available',True) else None) for c in p.get('components',[])},
-                momentum=momentum(p),momentum_parts=momentum_parts(p),significance=significance(p),news_at=iso(news_time(p)),
+                momentum=momentum(p),attention=attention_summary(p),significance=significance(p),news_at=iso(news_time(p)),
                 enterprise_reasons=p.get('enterprise_reasons') or [],
                 also=[dict(source=a['source'],title=a['title'],url=http_url(a.get('url'))) for a in p.get('also',[])],
                 story_links=[dict(kind=l['kind'],source=l['source'],title=l['title'],url=http_url(l['url']),published_at=iso(l['published_at'])) for l in p.get('story_links',[])],cloud_availability=p.get('cloud_availability',[]))
@@ -171,9 +166,8 @@ def md_item(position,p,order='editorial'):
     when=({'trend':'trending since ','updated':'updated '}.get(p.get('date_kind'),'published '))+iso(p['published_at'])
     if p.get('original_published_at'):when+=f'; original date {iso(p["original_published_at"])}'
     lines.append(f'   - Source: {md_text(p.get("source_name"))}; {when}')
-    if order=='momentum':
-        parts=momentum_parts(p)
-        lines.append(f'   - Momentum: popularity {round(parts["popularity"],1)} ({parts["basis"]}; {md_text(parts["note"])}) + coverage {parts["coverage"]}')
+    attention_note=attention_summary(p)
+    lines.append(f'   - Attention {attention_note["points"]}/25: {md_text(attention_note["note"])}')
     details=[f'topic: {md_text(p.get("topic"))}']
     if p.get('coverage',1)>1:details.append(f'platforms: {p["coverage"]} ({md_text(", ".join(p.get("sources",[])+p.get("related_sources",[])))})')
     if p.get('reasons'):details.append('why it ranks: '+md_text('; '.join(p['reasons'])))
@@ -204,7 +198,7 @@ def markdown(data,period=DEFAULT_PERIOD,category='all',limit=DEFAULT_LIMIT,now=N
          f'Other formats: [JSON]({base_url}/api/signals{link(params)}) · [RSS]({base_url}/api/rss?sort={"day" if period in ("now","trending") else period}) · '
          f'[site guide for agents]({base_url}/llms.txt). Parameters: sort={"|".join(SORTS)}, '
          f'category={"|".join(CATEGORIES)}, limit=1..{MAX_LIMIT}.','',
-         'The 0–100 editorial score combines relevance, freshness, evidence, coverage, primary sources and popularity. '
+         'The 0–100 editorial score combines relevance, freshness, evidence, primary sources and attention. '
          'It does not verify claims.','',f'## {CATEGORIES[category]}','']
     out+=[PERIOD_NOTES[period]+' Periods use the story date: publication, model or paper creation, first appearance in trends, or the model update date supplied by Hype.','']
     out+= [md_item(i,p,order) for i,p in enumerate(rows[:limit],1)] or ['No stories in this period.']
@@ -239,9 +233,9 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 ## Reading scores
 
-- Relevance: 30; freshness: 25; evidence: 15; independent platform coverage: 15; primary source: 5; platform popularity: 10 (percentile within the same source over 7 days).
+- Relevance: 30; freshness: 25; evidence: 15; primary source: 5; attention: 25.
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
-- Trending Now (`sort=trending`) orders by momentum, up to 25: popularity plus coverage. `momentum_parts` in JSON gives both and the popularity basis: a percentile of the platform metric within the same source over 7 days, or, for articles without one, the percentile of editorial weight (relevance + evidence + primary source) among recent publications. In every period, after three stories of one source further ones compete for the top ten with a fifth of the measure's scale taken off (5 momentum, 20 score, 15 significance), so lists are not strictly sorted by their measure.
+- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`) orders by momentum: attention, or for a story with no signal its editorial weight percentile (at most 10). In every period, after three stories of one source further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date. Hype model dates represent updates, not original model creation.
 '''

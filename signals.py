@@ -5,15 +5,15 @@ from hashlib import sha256
 import math
 import re
 from urllib.parse import urlsplit
+import attention
 import bot
 from cloud_news import prepare_cloud_posts,availability_for
 from presentation import english_post
 
 COMPONENTS = [('relevance','Relevance',30),('freshness','Freshness',25),
-              ('evidence','Evidence',15),('coverage','Cross-platform coverage',15),
-              ('primary','Primary source',5),('engagement','Popularity',10)]
+              ('evidence','Evidence',15),('primary','Primary source',5),('attention','Attention',25)]
 LABELS = {1:'Model release',2:'Local inference',3:'Tools',4:'Research',5:'Industry'}
-SCORING_VERSION='editorial-v5'
+SCORING_VERSION='editorial-v6'
 SIGNAL_CATEGORIES={'model':'models','repository':'repos','paper':'papers','news':'media','cloud':'cloud'}
 RANKING_METRICS={'models':('trending','likes'),'repos':('stars_day',),'papers':('upvotes',)}
 # Strong cues (products, controls, deployment models) count anywhere in the excerpt. The weak cue
@@ -283,7 +283,84 @@ def momentum_proxy(weight,baseline):
     return 10*share,f'editorial weight {weight}/50, above {round(100*share)}% of publications over {BASELINE_DAYS} days ({len(sample)} entries)'
 
 
-def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseline=None):
+# Attention channels from stored readings (attention.py), each ranked against its own recent values.
+# Platform: interest on the story's own platform. Discussion: HN. Reach: how widely the story spread.
+CHANNELS={'github_stars_day':('platform','GitHub stars / day',1000),'hf_trending':('platform','HF trendingScore',1000),
+          'hf_likes_day':('platform','HF likes / day',200),'replicate_runs_day':('platform','Replicate runs / day',10000),
+          'reactions':('platform','reactions',200),'comments':('platform','comments',200),
+          'most_read':('platform','places from the bottom of the outlet\'s most-read list',10),
+          'hn_points':('discussion','HN points',300),'news_outlets':('reach','outlets in Google News, 48 h',30)}
+FAMILIES=('platform','discussion','reach')
+
+
+def channel_baseline(readings):
+    """Positive values per attention channel; zero means "not seen" and never enters a sample."""
+    values=defaultdict(list)
+    for channels in (readings or {}).values():
+        for channel,value in channels.items():
+            if channel in CHANNELS and value>0:values[('attention',channel)].append(value)
+    return {group:sorted(sample) for group,sample in values.items()}
+
+
+def channel_share(channel,value,baseline):
+    if not value or value<=0:return 0,''
+    sample=(baseline or {}).get(('attention',channel),[])
+    if len(sample)<MIN_SAMPLE:
+        target=CHANNELS[channel][2]
+        return min(1,math.log1p(value)/math.log1p(target)),f'fixed scale, target {target}'
+    below=bisect_left(sample,value);equal=bisect_right(sample,value)-below
+    share=(below+0.5*equal)/len(sample)
+    return share,f'above {round(100*share)}% over {BASELINE_DAYS} days'
+
+
+def story_readings(members,readings):
+    """Readings of every member's article URL and of the artifacts the story is grouped by."""
+    keys=set()
+    for m in members:
+        keys|=attention.url_keys(m)
+        keys|={k for k in [attention.artifact_key(m.get('url'))]+sorted(story_keys(m)) if k and k.startswith(ARTIFACT_KEYS+('replicate.com/',))}
+    found=defaultdict(float)
+    for key in keys:
+        for channel,value in (readings or {}).get(key,{}).items():found[channel]=max(found[channel],value)
+    return found
+
+
+def attention_parts(p,members,publishers,baseline,readings,proxy):
+    """Attention (0–25) = 25 × (1 − Π(1 − p_family)); p_family is the best channel percentile in that family."""
+    channels=[]
+    native=[(m,popularity(m,baseline)) for m in members]
+    best=max(native,key=lambda x:x[1][0])
+    if best[1][1]:channels.append(dict(family='platform',channel='native',label=source_name(best[0]),share=best[1][0]/10,note=best[1][2]))
+    hn_member=any(source_id(m)=='hn' for m in members)
+    for channel,value in story_readings(members,readings).items():
+        if channel not in CHANNELS or channel=='hn_points' and hn_member:continue
+        share,how=channel_share(channel,value,baseline)
+        if share>0:channels.append(dict(family=CHANNELS[channel][0],channel=channel,label=CHANNELS[channel][1],share=share,
+                                        note=f'{round(value,1):g} {CHANNELS[channel][1]}; {how}'))
+    if len(publishers)>1:
+        channels.append(dict(family='reach',channel='coverage',label='independent platforms here',share=min(1,(len(publishers)-1)/3),
+                             note=f'{len(publishers)} independent platforms in our sources'))
+    families={f:max((c['share'] for c in channels if c['family']==f),default=0) for f in FAMILIES}
+    rest=1
+    for share in families.values():rest*=1-share
+    points=25*(1-rest)
+    # Trending Now only: a story with no attention signal at all is ranked by its editorial weight, at most 10.
+    momentum=points if points>0 or proxy is None else proxy
+    for c in channels:c['share']=round(c['share'],3)
+    note='; '.join(f"{c['family']}: {c['note']}" for c in sorted(channels,key=lambda c:-c['share'])) or 'No attention signal yet'
+    return points,round(momentum,1),channels,note
+
+
+def momentum_proxy(weight,baseline):
+    """Trending Now momentum of a story with no attention signal: its editorial weight against recent publications."""
+    sample=(baseline or {}).get(('publications','weight'),[])
+    if len(sample)<MIN_SAMPLE:
+        return 10*weight/50,f'editorial weight {weight}/50; short history, fixed scale'
+    share=(bisect_left(sample,weight)+0.5*(bisect_right(sample,weight)-bisect_left(sample,weight)))/len(sample)
+    return 10*share,f'editorial weight {weight}/50, above {round(100*share)}% of publications over {BASELINE_DAYS} days ({len(sample)} entries)'
+
+
+def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseline=None, readings=None):
     stamp,stamp_kind=reference_time(p)
     age=max(0,(now-stamp)/3600)
     # A reported update (Hype) is not a release: it fades like news, not like a new model.
@@ -292,21 +369,15 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseli
     priority_,measured,repository,unknown_model=flags['priority'],flags['measured'],flags['repository'],flags['unknown_model']
     own={publisher(m) for m in members}
     publishers=own|{publisher(m) for m in related}
-    engagement,available,metric_note=max((popularity(m,baseline) for m in members),key=lambda x:(x[0],x[1]))
-    proxy=None
-    if not available:
-        # Not part of the editorial score (relevance is already there); only Trending Now's momentum reads it.
-        proxy,proxy_note=momentum_proxy(sum(basis.values()),baseline)
-        metric_note=f'No platform metric. Trending Now uses {proxy_note}'
+    proxy,proxy_note=momentum_proxy(sum(basis.values()),baseline)
+    attention_points,momentum,channels,attention_note=attention_parts(p,members,publishers,baseline,readings,proxy)
+    if not channels:attention_note+=f'. Trending Now uses {proxy_note}'
     values=dict(relevance=basis['relevance'],freshness=25*2**(-age/half_life),evidence=basis['evidence'],
-                coverage=min(15,max(0,len(publishers)-1)*7.5),primary=basis['primary'],engagement=engagement)
+                primary=basis['primary'],attention=attention_points)
     if focus=='enterprise':
         # Inside Enterprise the general ladder rates nearly everything "Industry"; rank by business evidence instead.
         values['relevance'],focus_reason=enterprise_relevance(members,series)
-    extra=sorted(publishers-own)
-    notes=dict(engagement=metric_note,
-               freshness=f'{round(age)} h ago ({stamp_kind}); half-life {half_life} h',
-               coverage=('Same story: '+', '.join(extra)) if extra else '')
+    notes=dict(attention=attention_note,freshness=f'{round(age)} h ago ({stamp_kind}); half-life {half_life} h')
     reasons=[]
     if focus=='enterprise': reasons.append(focus_reason)
     elif p.get('date_kind')=='updated' and p.get('content_kind')=='model': reasons.append('Model update')
@@ -317,10 +388,9 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None, baseli
     if len(publishers)>1: reasons.append(f'{len(publishers)} independent platforms')
     if values['primary']: reasons.append('Official source available')
     if not reasons: reasons.append('Recent relevant news')
-    components=[{ 'id':key,'label':label,'points':round(values[key],1),'max':maximum,
-        'available':available if key=='engagement' else True,
+    components=[{ 'id':key,'label':label,'points':round(values[key],1),'max':maximum,'available':True,
         'explanation':notes.get(key,'')} for key,label,maximum in COMPONENTS]
-    if proxy is not None:next(c for c in components if c['id']=='engagement')['momentum_proxy']=round(proxy,1)
+    next(c for c in components if c['id']=='attention').update(momentum=momentum,channels=channels)
     return round(sum(values.values()),1),components,reasons
 
 
@@ -474,7 +544,7 @@ def story_links(url,discussion,members,related):
     return links
 
 
-def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None):
+def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=None):
     posts=[english_post(p) for p in posts]
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
@@ -502,10 +572,10 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None):
               for rep,_,_ in sorted(parts,key=lambda part:part[0]['created_utc']) if rep is not lead]
         stories.append((lead,members));merged.append((first[2],also,min(reference_time(rep)[0] for rep,_,_ in parts)))
     series=enterprise_series(posts) if focus=='enterprise' else None
-    baseline=popularity_baseline(posts,now,cfg) if baseline is None else baseline
+    baseline=(popularity_baseline(posts,now,cfg)|channel_baseline(readings)) if baseline is None else baseline
     result=[]
     for (aliases,also,news_at),(p,members),related in zip(merged,stories,related_stories(stories)):
-        number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline)
+        number,components,reasons=score(p,members,now,cfg,related,focus,series,baseline,readings)
         stable=next(iter(sorted(k for k in aliases if k.startswith(('github.com/','huggingface.co/')))),None)
         stable=stable or next(iter(sorted(k for k in aliases if k.startswith('article:'))),None) or sorted(aliases)[0]
         sid=source_id(p)

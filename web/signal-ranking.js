@@ -6,7 +6,7 @@
   // Period tabs (mirrored in digest.py). Every tab selects by when a story became news (news_at: publication,
   // model/paper creation, a repository's first day in GitHub Trending), never by the last read of a trend list,
   // so an August model trending again today is not "today's" news. Each tab sorts and headlines one measure:
-  //   trending  12 h   momentum     = platform popularity + cross-outlet coverage (max 25): what is discussed now
+  //   trending  12 h   momentum     = attention: platform, discussion and reach signals (max 25): what is discussed now
   //   day       24 h   editorial    = full editorial score with freshness (max 100): the day's main news
   //   week/month/year  significance = editorial score without freshness (max 75): what mattered in the period
   const PERIODS={trending:{hours:12,order:'momentum'},day:{hours:24,order:'editorial'},
@@ -17,12 +17,11 @@
   function validMetric(item,category){const m=metric(item,category);return m&&metrics[category]?.includes(m.kind)&&typeof m.value==='number'&&Number.isFinite(m.value)&&m.value>=0?m:null}
   function component(item,id){return (item.components||[]).find(c=>c.id===id)}
   const round=value=>Math.round(value*10)/10;
-  // A story without a platform metric (an article) uses momentum_proxy, its editorial weight as a percentile
-  // of recent publications, as in digest.py.
+  // Momentum is computed once, in signals.attention_parts: the story's attention (0–25), or its editorial-weight
+  // proxy when it has no attention signal at all.
   function momentum(item){
-    const engagement=component(item,'engagement'),coverage=component(item,'coverage');
-    const popular=engagement?.available===false?engagement.momentum_proxy||0:engagement?.points||0;
-    return round(popular+(coverage?.points||0));
+    const attention=component(item,'attention');
+    return round(attention?.momentum??attention?.points??0);
   }
   function significance(item){return round(item.score-(component(item,'freshness')?.points||0))}
   function measure(item,order){return order==='momentum'?momentum(item):order==='significance'?significance(item):item.score}

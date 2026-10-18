@@ -9,6 +9,7 @@ from pathlib import Path
 import signal
 import threading
 import time
+import attention
 import bot
 import dashboard
 from publication import Publications
@@ -43,6 +44,8 @@ class Collector:
                 stamp=result['collected_at']
                 if stamp:os.utime('data/feed-snapshot.json',(stamp,stamp))
                 dashboard.write_atomic('data/feed-status.json',json.dumps(result['statuses'],ensure_ascii=False))
+                try:attention.refresh(result['posts'],cfg,stop=self.stop)
+                except Exception:LOG.exception('attention_refresh_failed job=%s',job['id'])
                 data=self.publish_snapshot()
             else:
                 data=self.publications.load()['data']

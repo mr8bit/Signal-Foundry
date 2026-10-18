@@ -625,6 +625,14 @@
       "microsoft.com": 30,
       "vercel.com": 20,
       "github.com": 20,
+      "api.github.com": 1,
+      "hn.algolia.com": 1,
+      "huggingface.co": 2,
+      "latent.space": 2,
+      "www.latent.space": 2,
+      "www.interconnects.ai": 2,
+      "importai.substack.com": 2,
+      "news.google.com": 5,
       "blog.cloudflare.com": 20
     },
     "max_backoff_seconds": 86400,
@@ -642,5 +650,16 @@
   },
   "cloud": {
     "price_drop_min_percent": 20
+  },
+  "attention": {
+    "enabled": true,
+    "budget_seconds": 150,
+    "lookup_hours": 72,
+    "gnews_categories": ["news", "lab", "newsletter"],
+    "substack_sources": ["latent", "interconnects", "importai"],
+    "most_read": {
+      "verge": "https://www.theverge.com/ai-artificial-intelligence",
+      "decoder": "https://the-decoder.com/"
+    }
   }
 }
