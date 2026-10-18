@@ -47,7 +47,7 @@ class Sources(unittest.TestCase):
         self.assertIsNone(bot.reject(dict(p,title='News',filter_mode='all'),CFG,NOW))
         self.assertEqual(bot.reject(dict(p,title='AI sponsored giveaway'),CFG,NOW),'excluded keyword')
         rendered=bot.render(p)
-        self.assertIn('Читать статью',rendered)
+        self.assertIn('Read article',rendered)
         self.assertIn('Test AI',rendered)
         self.assertNotIn('r/',rendered)
         self.assertNotIn('reddit.com',rendered)

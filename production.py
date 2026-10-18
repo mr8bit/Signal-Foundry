@@ -92,7 +92,7 @@ class SignalApp:
         try:pub=self.publications.load()
         except (OSError,ValueError,KeyError):
             if path in ('/','/homepage/','/news-preview.html'):
-                body='<html lang="ru"><meta charset="utf-8"><meta http-equiv="refresh" content="10"><title>Signal</title><body style="background:#101214;color:#eef1f2;font:18px system-ui;padding:8vw"><h1>Signal запускается</h1><p>Сборщик готовит первую ленту. Страница обновится автоматически.</p></body></html>'
+                body='<html lang="en"><meta charset="utf-8"><meta http-equiv="refresh" content="10"><title>Signal</title><body style="background:#101214;color:#eef1f2;font:18px system-ui;padding:8vw"><h1>Signal is starting</h1><p>The collector is preparing the first feed. This page will reload automatically.</p></body></html>'
                 return self.response(start,503,body,'text/html; charset=utf-8',headers=[('Retry-After','10')],cache=False,environ=env)
             return self.response(start,503,'{"error":"First publication is not ready"}',headers=[('Retry-After','10')],cache=False,environ=env)
         if path in ('/','/homepage/','/news-preview.html'):

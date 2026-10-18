@@ -42,7 +42,7 @@ class Trends(unittest.TestCase):
         self.assertEqual({m['kind']:m['value'] for m in p['metrics']},{'likes':42,'downloads_month':1234})
         item=signals.build_items([p],CFG,NOW)[0]
         self.assertEqual(item['column'],'models')
-        self.assertEqual(item['topic'],'Модели')
+        self.assertEqual(item['topic'],'Models')
         self.assertEqual(item['date_kind'],'trend')
 
     def test_papers_use_abstract_and_upvotes_not_provider_ai_summary(self):

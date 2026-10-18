@@ -57,7 +57,7 @@ def rss(data,period='day',base_url='http://127.0.0.1:8765',limit=100):
     meta='urn:ai-signal:feed:1'
     ET.register_namespace('content',content);ET.register_namespace('signal',meta)
     root=ET.Element('rss',version='2.0');channel=ET.SubElement(root,'channel')
-    for key,value in [('title','AI Signal · '+period),('link',base_url+'/'),('description','AI-новости из Reddit, медиа и лабораторий'),
+    for key,value in [('title','AI Signal · '+period),('link',base_url+'/'),('description','AI news from Reddit, publications and research labs'),
                       ('lastBuildDate',formatdate(data['generated_at'],usegmt=True)),('ttl','15')]:
         ET.SubElement(channel,key).text=value
     ET.SubElement(channel,'{'+meta+'}scoring_version').text=data['scoring_version']

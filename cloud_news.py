@@ -64,54 +64,54 @@ def cloud_decision(p,cfg=None):
     p=normalize_note(p)
     title=p['title'];body=p.get('selftext','')[:5000];text=title+' '+body
     has=lambda pattern,value=text:bool(re.search(pattern,value,re.I))
-    if has(EXCLUDE,title) or has(REGION,title) or has(r'^how to\b|\b(?:ISO[- ]?\d+|SOC[- ]?[12]|HIPAA|FedRAMP)\b',title):return Decision('drop','Кейс, обучение, регион или служебный анонс')
+    if has(EXCLUDE,title) or has(REGION,title) or has(r'^how to\b|\b(?:ISO[- ]?\d+|SOC[- ]?[12]|HIPAA|FedRAMP)\b',title):return Decision('drop','Customer story, tutorial, region or administrative announcement')
     if rule=='gemini_enterprise' and (has(r'\bpreview\b') or not (has(r'\b(?:GA|generally available|general availability)\b') or model_keys(text))):
-        return Decision('drop','Только GA, без preview')
-    if rule=='vertex_notes' and not model_keys(text):return Decision('drop','Нет названия версии модели')
+        return Decision('drop','GA only; previews excluded')
+    if rule=='vertex_notes' and not model_keys(text):return Decision('drop','No versioned model name')
     if rule=='azure_updates' and (not has(r'^\[Launched\]',title) or not has(r'\b(?:OpenAI|Foundry|models?|agents?)\b')):
-        return Decision('drop','Только Launched с AI-темой')
+        return Decision('drop','Only Launched updates about AI')
     if rule=='aws_whats_new' and not has(r'\b(?:Bedrock|SageMaker|Nova|Amazon Q|Q Developer|Q Business|AgentCore|Trainium)\b',title):
-        return Decision('drop','Не AI-сервис AWS')
+        return Decision('drop','Not an AWS AI service')
     if rule=='vercel_sdk':
-        return Decision('standalone','Мажорный релиз AI SDK','agent_platform') if re.fullmatch(r'ai@[1-9]\d*\.0\.0',title.strip()) else Decision('drop','Не стабильный мажорный релиз ai@N.0.0')
-    if rule=='foundry' and has(r"\bwhat['’]?s new\b",title):return Decision('standalone','Обновления Microsoft Foundry','agent_platform')
-    if rule=='vercel' and not has(r'\b(?:AI Gateway|v0|AI SDK|agents?)\b',title):return Decision('drop','Не AI-продукт Vercel')
-    if rule=='gcloud_blog' and not has(ANNOUNCE+r'|\bGemini\b',title):return Decision('drop','Не анонс Google Cloud')
-    if rule=='aws_ml' and not has(r'\b(?:is now available|Bedrock|AgentCore|Nova|open[- ]weights?)\b',title):return Decision('drop','Не анонс AWS GenAI')
+        return Decision('standalone','AI SDK major release','agent_platform') if re.fullmatch(r'ai@[1-9]\d*\.0\.0',title.strip()) else Decision('drop','Not a stable ai@N.0.0 major release')
+    if rule=='foundry' and has(r"\bwhat['’]?s new\b",title):return Decision('standalone','Microsoft Foundry updates','agent_platform')
+    if rule=='vercel' and not has(r'\b(?:AI Gateway|v0|AI SDK|agents?)\b',title):return Decision('drop','Not a Vercel AI product')
+    if rule=='gcloud_blog' and not has(ANNOUNCE+r'|\bGemini\b',title):return Decision('drop','Not a Google Cloud announcement')
+    if rule=='aws_ml' and not has(r'\b(?:is now available|Bedrock|AgentCore|Nova|open[- ]weights?)\b',title):return Decision('drop','Not an AWS GenAI announcement')
     if rule=='azure_blog' and (not has(ANNOUNCE,title) or has(r'\b(?:strategy|strategies|thought leadership|future of|vision for)\b',title)):
-        return Decision('drop','Не анонс Azure')
+        return Decision('drop','Not an Azure announcement')
     if rule=='aws_news':
         words=(cfg or {}).get('include',[])
         if not any(re.search(r'(?<!\w)'+re.escape(word)+r'(?!\w)',title,re.I) for word in words) and not has(r'\b(?:Bedrock|SageMaker|AgentCore|Nova|Trainium\w*|Inferentia\w*)\b',title):
-            return Decision('drop','Нет AI-темы в заголовке')
-    if not has(SERVICES):return Decision('drop','Нет AI-темы')
+            return Decision('drop','No AI topic in the headline')
+    if not has(SERVICES):return Decision('drop','No AI topic')
     # A quantified reduction in cloud AI pricing is an independent product event.
     price=has(r'\b(?:pric\w*|cost\w*|cheaper|discount\w*)\b',title) and has(r'\b(?:reduc\w*|cut\w*|lower\w*|drop\w*|cheaper|discount\w*)\b',title)
     price_scope=title+' '+ ' '.join(s for s in re.split(r'\n|[!?]|\.\s',body) if re.search(r'\b(?:pric\w*|cost\w*|cheaper|discount\w*|savings)\b',s,re.I))
     reductions=[float(v) for v in re.findall(r'(\d+(?:\.\d+)?)\s*%',price_scope)]
     multiples=[float(v) for v in re.findall(r'(\d+(?:\.\d+)?)\s*[x×]\s*(?:cheaper|lower)',price_scope,re.I)]
     if price and (any(v>=(cfg or {}).get('cloud',{}).get('price_drop_min_percent',20) for v in reductions) or any(v>=2 for v in multiples)):
-        return Decision('standalone','Заметное снижение цен AI-сервиса','pricing')
-    if price:return Decision('drop','Снижение цены без достаточных численных данных')
+        return Decision('standalone','Significant AI service price reduction','pricing')
+    if price:return Decision('drop','Price reduction without sufficient figures')
     owned={'aws':r'\b(?:Amazon )?Nova\b','cloudflare':r'\bClef\b'}
     if has(r'\bNova (?:Act|Forge)\b',title) and has(ANNOUNCE,title):
-        return Decision('standalone','Платформа AWS Nova','agent_platform')
+        return Decision('standalone','AWS Nova platform','agent_platform')
     if has(owned.get(p.get('cloud_provider'),'(?!)'),title) and has(ANNOUNCE,title):
-        return Decision('standalone','Собственная модель облачного провайдера','model')
+        return Decision('standalone','Cloud provider model','model')
     hardware=re.search(r'\b(?:Trainium\w*|Inferentia\w*|TPU\w*|new .*(?:GPU|AI) instances?)\b',title,re.I)
     model=MODEL.search(title) or re.search(r'\bmodels?\b',title,re.I)
     if hardware and (not model or hardware.start()<model.start()) and has(ANNOUNCE,title):
-        return Decision('standalone','Новое железо для AI','hardware')
+        return Decision('standalone','New AI hardware','hardware')
     availability=(bool(model_keys(title)) or bool(model_links(p)) or has(r'\bmodels?\b(?!\s+(?:context protocol|router|gateway|deployment platform))',title)) and has(r'\b(?:available|availability|support\w*|access|adds?|bring\w*|introduc\w*|launch\w*|releas\w*)\b')
     # Date-only release-note titles carry the model announcement in their content.
     if rule in ('vertex_notes','gemini_enterprise') and model_keys(text):availability=True
-    if availability:return Decision('availability','Доступность модели в облаке','model')
-    if has(PLATFORMS,title) and has(ANNOUNCE,title):return Decision('standalone','Облачная платформа для AI и агентов','agent_platform')
-    return Decision('drop','Нет собственного релиза, платформы, снижения цен или нового железа')
+    if availability:return Decision('availability','Cloud model availability','model')
+    if has(PLATFORMS,title) and has(ANNOUNCE,title):return Decision('standalone','Cloud platform for AI and agents','agent_platform')
+    return Decision('drop','No first-party release, platform, price reduction or new hardware')
 
 
 def availability_entry(p):
-    label=p.get('cloud_label') or p.get('source_name','Облако')
+    label=p.get('cloud_label') or p.get('source_name','Cloud')
     for pattern,name in [(r'\bBedrock\b','Amazon Bedrock'),(r'\bVertex AI\b','Vertex AI'),
                          (r'\bFoundry\b','Microsoft Foundry'),(r'\bAI Gateway\b','AI Gateway'),(r'\bWorkers AI\b','Workers AI')]:
         if re.search(pattern,p['title'],re.I):label=name;break

@@ -48,7 +48,7 @@ class Application:
                     temp=Path(path+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False));temp.replace(path)
                 self.reload()
             except Exception as exc:
-                self.error='Не удалось обновить источники; предыдущая лента сохранена.'
+                self.error='Could not update sources; the previous feed was preserved.'
                 LOG.exception('Refresh failed: %s',type(exc).__name__)
             finally:
                 self.refreshing=False

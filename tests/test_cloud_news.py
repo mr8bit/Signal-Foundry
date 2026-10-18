@@ -90,7 +90,7 @@ class CloudNews(unittest.TestCase):
         self.assertEqual(len(data['signal_rankings']['cloud']),1)
         self.assertEqual([release,update],original)
         groups=bot.select([release,update],CFG,NOW)
-        self.assertEqual(len(groups),1);self.assertIn('Где взять:',bot.render(groups[0][0]))
+        self.assertEqual(len(groups),1);self.assertIn('Available on:',bot.render(groups[0][0]))
 
     def test_unmatched_updates_are_pending_not_standalone_posts(self):
         update=post('Claude Sonnet 4.5 now available on AI Gateway','vercel')
@@ -117,9 +117,9 @@ class CloudNews(unittest.TestCase):
         release=post('Claude Sonnet 4.5 released')
         update=post('Claude Sonnet 4.5 now available on AI Gateway','vercel')
         data=dashboard.dataset([release,update],CFG,[],NOW);item=data['items'][0]
-        self.assertIn('Где взять:',digest.markdown(data,now=NOW))
+        self.assertIn('Available on:',digest.markdown(data,now=NOW))
         self.assertIn('cloud_availability',digest.signals_json(data,now=NOW))
-        self.assertIn('Где взять:',digest.static_card(item))
+        self.assertIn('Available on:',digest.static_card(item))
         with patch('dashboard.time.time',return_value=NOW):
             rss=ET.fromstring(dashboard.rss(data));self.assertIsNotNone(rss.find('./channel/item/{urn:ai-signal:feed:1}cloud_availability'))
         cfg=copy.deepcopy(CFG)

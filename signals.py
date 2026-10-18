@@ -6,11 +6,12 @@ import re
 from urllib.parse import urlsplit
 import bot
 from cloud_news import prepare_cloud_posts,availability_for
+from presentation import english_post
 
-COMPONENTS = [('relevance','Соответствие теме',30),('freshness','Свежесть',25),
-              ('evidence','Конкретика',15),('coverage','Охват площадок',15),
-              ('primary','Первоисточник',5),('engagement','Популярность',10)]
-LABELS = {1:'Релиз модели',2:'Локальный запуск',3:'Инструменты',4:'Исследования',5:'Индустрия'}
+COMPONENTS = [('relevance','Relevance',30),('freshness','Freshness',25),
+              ('evidence','Evidence',15),('coverage','Cross-platform coverage',15),
+              ('primary','Primary source',5),('engagement','Popularity',10)]
+LABELS = {1:'Model release',2:'Local inference',3:'Tools',4:'Research',5:'Industry'}
 SCORING_VERSION='editorial-v3'
 SIGNAL_CATEGORIES={'model':'models','repository':'repos','paper':'papers','news':'media','cloud':'cloud'}
 RANKING_METRICS={'models':('trending','likes'),'repos':('stars_day',),'papers':('upvotes',)}
@@ -20,16 +21,16 @@ RANKING_METRICS={'models':('trending','likes'),'repos':('stars_day',),'papers':(
 # They need an outcome verb ("Sophos cuts…with OpenAI") or "How X…with": "Introducing Y with Gemini" is a product.
 CASE_VERBS=r'(?:cut|boost|save|scale|turn|build|answer|resolve|increase|accelerat|transform|reimagin|put|bring|help|free|power|sharpen|move|reduce|speed|automat|deploy|triple|double|grow|govern)\w*'
 ENTERPRISE_RULES=[
-    ('Корпоративное применение','weak',r'\b(?:enterprises?|b2b|business customers|business users|corporate customers|erp|crm|saas\w*|cios?)\b|корпоративн\w*|для бизнес\w*|для компани\w*'),
-    ('Безопасность и управление','strong',r'\b(?:sso|scim|rbac|soc\s*2|data residency|data governance|ai governance|enterprise security|admin controls|spend controls)\b|управлени\w* доступ\w*|резидентност\w* данн\w*'),
-    ('Частное развёртывание','strong',r'\b(?:on[- ]prem(?:ises|ise)?|private cloud|dedicated deployment|air[- ]gapped|sovereign (?:ai|cloud))\b|частн\w* облак\w*|изолированн\w* контур\w*'),
-    ('Корпоративная AI-платформа','strong',r'\b(?:chatgpt (?:enterprise|business|work|team)|claude (?:enterprise|for work|team)|gemini enterprise|copilot studio|microsoft 365 copilot|m365 copilot|github copilot enterprise|watsonx|agentforce|sap joule|azure ai foundry|amazon bedrock|agentcore|microsoft foundry|azure openai|ai gateway|workers ai|vertex ai|databricks|snowflake cortex|servicenow)\b'),
-    ('Внедрение в компании','case',r'^(?!(?:how to|introducing|announcing)\b)(?:how\b.*|.*\b'+CASE_VERBS+r'\b.*)\b(?:with|using)\s+(?:chatgpt|codex|claude|gemini|openai|copilot)\b|\bto (?:its |all )?(?:[\d,]+ )?employees\b'),
+    ('Enterprise use','weak',r'\b(?:enterprises?|b2b|business customers|business users|corporate customers|erp|crm|saas\w*|cios?)\b|корпоративн\w*|для бизнес\w*|для компани\w*'),
+    ('Security and governance','strong',r'\b(?:sso|scim|rbac|soc\s*2|data residency|data governance|ai governance|enterprise security|admin controls|spend controls)\b|управлени\w* доступ\w*|резидентност\w* данн\w*'),
+    ('Private deployment','strong',r'\b(?:on[- ]prem(?:ises|ise)?|private cloud|dedicated deployment|air[- ]gapped|sovereign (?:ai|cloud))\b|частн\w* облак\w*|изолированн\w* контур\w*'),
+    ('Enterprise AI platform','strong',r'\b(?:chatgpt (?:enterprise|business|work|team)|claude (?:enterprise|for work|team)|gemini enterprise|copilot studio|microsoft 365 copilot|m365 copilot|github copilot enterprise|watsonx|agentforce|sap joule|azure ai foundry|amazon bedrock|agentcore|microsoft foundry|azure openai|ai gateway|workers ai|vertex ai|databricks|snowflake cortex|servicenow)\b'),
+    ('Business adoption','case',r'^(?!(?:how to|introducing|announcing)\b)(?:how\b.*|.*\b'+CASE_VERBS+r'\b.*)\b(?:with|using)\s+(?:chatgpt|codex|claude|gemini|openai|copilot)\b|\bto (?:its |all )?(?:[\d,]+ )?employees\b'),
 ]
-ENTERPRISE_RELEVANCE={'title':(30,'Корпоративная тема в заголовке'),'case':(24,'Пример внедрения в компании'),
-                      'body':(18,'Корпоративные признаки в тексте')}
+ENTERPRISE_RELEVANCE={'title':(30,'Enterprise topic in the headline'),'case':(24,'Business adoption story'),
+                      'body':(18,'Enterprise evidence in the text')}
 # A vendor's story about its own customer is self-reported; a steady stream of them is a content series.
-VENDOR_CASE=(18,'Кейс клиента в блоге вендора')
+VENDOR_CASE=(18,'Customer story on a vendor blog')
 SERIES_POINTS=12
 SERIES_WINDOW=7*86400
 
@@ -85,7 +86,7 @@ def enterprise_relevance(members,series=None):
                 option=VENDOR_CASE
             else:
                 n=1+sum(0<m['created_utc']-t<=SERIES_WINDOW for t in stamps)
-                option=(SERIES_POINTS,f'Серия кейсов {source_name(m)}: {n}-й за 7 дней')
+                option=(SERIES_POINTS,f'Customer story series {source_name(m)}: {n} in 7 days')
         else:
             option=next((ENTERPRISE_RELEVANCE[x] for x in ('title','case','body') if x in places),(0,''))
         best=max(best,option,key=lambda x:x[0])
@@ -167,18 +168,18 @@ def popularity(p):
         kind,value=metric['kind'],metric['value']
         if kind in targets:
             points=min(10,10*math.log1p(max(0,value))/math.log1p(targets[kind]))
-            return points,True,f'{value} {metric["label"]}; порог насыщения {targets[kind]}'
+            return points,True,f'{value} {metric["label"]}; saturation target {targets[kind]}'
     raw=raw_points(p)
-    return (min(10,math.log10(raw+1)*2.5),True,f'{raw} очков') if raw is not None and raw>=0 else (0,False,'Нет данных')
+    return (min(10,math.log10(raw+1)*2.5),True,f'{raw} points') if raw is not None and raw>=0 else (0,False,'No data')
 
 
 def reference_time(p):
     """When the story became news: publication for models/papers, first sighting for trending repositories."""
     if p.get('date_kind')!='trend':
-        return p['created_utc'],'обновление' if p.get('date_kind')=='updated' else 'публикация'
+        return p['created_utc'],'update' if p.get('date_kind')=='updated' else 'publication'
     if p.get('content_kind') in HALF_LIFE and p.get('original_published_at'):
-        return p['original_published_at'],'статья опубликована' if p['content_kind']=='paper' else 'модель создана'
-    return p.get('first_seen',p['created_utc']),'впервые в трендах'
+        return p['original_published_at'],'paper published' if p['content_kind']=='paper' else 'model created'
+    return p.get('first_seen',p['created_utc']),'first seen trending'
 
 
 def priority(p,cfg=None):
@@ -213,7 +214,7 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None):
     age=max(0,(now-stamp)/3600)
     half_life=HALF_LIFE.get(p.get('content_kind'),24)
     text=p['title']+' '+p.get('article_text',p.get('selftext',''))
-    measured=bool(re.search(r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)|(?<![$\w])\d+(?:\.\d+)?B\b|Параметров:\s*\d',text,re.I))
+    measured=bool(re.search(r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|t/s|%|ms|VRAM)|(?<![$\w])\d+(?:\.\d+)?B\b|(?:Parameters|Параметров):\s*\d',text,re.I))
     repository=any(bot.canonical(url) for url in [p.get('url','')]+p.get('links',[]))
     research=bot.matches(text,['paper','arXiv','research','benchmark'])
     own={publisher(m) for m in members}
@@ -226,22 +227,22 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None):
                 primary=5 if any(m.get('category') in ('lab','cloud') for m in members) else 0,
                 engagement=engagement)
     if focus=='enterprise':
-        # Inside Enterprise the general ladder rates nearly everything "Индустрия"; rank by business evidence instead.
+        # Inside Enterprise the general ladder rates nearly everything "Industry"; rank by business evidence instead.
         values['relevance'],focus_reason=enterprise_relevance(members,series)
     extra=sorted(publishers-own)
     notes=dict(engagement=metric_note,
-               freshness=f'{round(age)} ч назад ({stamp_kind}); полураспад {half_life} ч',
-               coverage=('Тот же сюжет: '+', '.join(extra)) if extra else '')
+               freshness=f'{round(age)} h ago ({stamp_kind}); half-life {half_life} h',
+               coverage=('Same story: '+', '.join(extra)) if extra else '')
     reasons=[]
     if focus=='enterprise': reasons.append(focus_reason)
-    elif p.get('date_kind')=='updated' and p.get('content_kind')=='model': reasons.append('Обновление модели')
-    elif unknown_model: reasons.append('Модель в трендах')
+    elif p.get('date_kind')=='updated' and p.get('content_kind')=='model': reasons.append('Model update')
+    elif unknown_model: reasons.append('Trending model')
     elif priority_<5: reasons.append(LABELS[priority_])
-    if measured: reasons.append('Есть численные показатели')
-    if repository: reasons.append('Ссылка на модель или репозиторий')
-    if len(publishers)>1: reasons.append(f'{len(publishers)} разных площадки')
-    if values['primary']: reasons.append('Есть официальный источник')
-    if not reasons: reasons.append('Свежая тематическая новость')
+    if measured: reasons.append('Includes measurements')
+    if repository: reasons.append('Model or repository link')
+    if len(publishers)>1: reasons.append(f'{len(publishers)} independent platforms')
+    if values['primary']: reasons.append('Official source available')
+    if not reasons: reasons.append('Recent relevant news')
     return round(sum(values.values()),1),[{ 'id':key,'label':label,'points':round(values[key],1),'max':maximum,
         'available':available if key=='engagement' else True,
         'explanation':notes.get(key,'')} for key,label,maximum in COMPONENTS],reasons
@@ -359,6 +360,7 @@ def representative(members,chosen):
 
 
 def build_items(posts,cfg,now,max_hours=8760,focus=None):
+    posts=[english_post(p) for p in posts]
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
     posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
     posts,_=prepare_cloud_posts(posts,cfg,now,max_hours)
@@ -403,13 +405,13 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None):
         signal_categories,signal_metrics=ranking_metadata(members)
         result.append(dict(id=sha256(stable.encode()).hexdigest()[:20],title=p['title'],
             summary=summary,
-            description_kind=('Описание из Replicate Hype' if p.get('hype_origin') else 'Метаданные модели' if p.get('content_kind')=='model' else 'Аннотация статьи' if p.get('content_kind')=='paper' else 'Описание репозитория' if p.get('content_kind')=='repository' else 'Фрагмент статьи' if p.get('article_text') else 'Описание из RSS'),
+            description_kind=('Description from Replicate Hype' if p.get('hype_origin') else 'Model metadata' if p.get('content_kind')=='model' else 'Paper abstract' if p.get('content_kind')=='paper' else 'Repository description' if p.get('content_kind')=='repository' else 'Article excerpt' if p.get('article_text') else 'Feed description'),
             source_id=sid,source_name=source_name(p),category=category,column=column,
             signal_categories=signal_categories,signal_metrics=signal_metrics,
             cloud_availability=availability_for(members),
             enterprise_reasons=list(dict.fromkeys(reason for member in members for reason in enterprise_reasons(member))),
             published_at=p['created_utc'],score=number,components=components,reasons=reasons,
-            priority=priority(p,cfg),topic='Модели' if p.get('content_kind')=='model' else LABELS[priority(p,cfg)],url=url,discussion_url=discussion,
+            priority=priority(p,cfg),topic='Models' if p.get('content_kind')=='model' else LABELS[priority(p,cfg)],url=url,discussion_url=discussion,
             domain=urlsplit(url).hostname or '',coverage=len({publisher(m) for m in members+related}),
             sources=list(dict.fromkeys(source_name(m) for m in members)),
             related_sources=list(dict.fromkeys(source_name(m) for m in related)),

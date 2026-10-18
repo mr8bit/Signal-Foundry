@@ -22,6 +22,7 @@ from email.utils import parsedate_to_datetime
 from sources import article_url, parse_site_feed, parse_newsroom
 from articles import ArticleFetcher
 from trends import parse_trends
+from presentation import english_post
 from http_cache import HTTPCache, CacheError
 from cloud_news import cloud_decision,prepare_cloud_posts,availability_for
 
@@ -391,8 +392,9 @@ def excerpt(text, limit=900):
 
 
 def render(p):
-    labels = {1: 'Релиз модели', 2: 'На своём железе', 3: 'Инструменты', 4: 'Исследования', 5: 'AI-новости'}
-    if p.get('content_kind')=='model': labels[1]='Модели Hugging Face'
+    p=english_post(p)
+    labels = {1: 'Model release', 2: 'On your hardware', 3: 'Tools', 4: 'Research', 5: 'AI news'}
+    if p.get('content_kind')=='model': labels[1]='Models'
     title = re.sub(r'^\s*\[(?:R|N|P)\]\s*', '', p['title'], flags=re.I)
     title = html.escape(excerpt(title, 250))
     body = html.escape(excerpt(p.get('article_text') or p.get('selftext', '')))
@@ -405,12 +407,12 @@ def render(p):
         host = (urlsplit(external).hostname or '').lower()
         label = 'Hugging Face' if host == 'huggingface.co' else 'GitHub' if host == 'github.com' else host.removeprefix('www.')
         links.append(f'<a href="{html.escape(external, quote=True)}">{html.escape(label)}</a>')
-    links.insert(0, f'<a href="{html.escape(url, quote=True)}">{"Читать статью" if site else "Обсуждение"}</a>')
+    links.insert(0, f'<a href="{html.escape(url, quote=True)}">{"Read article" if site else "Discussion"}</a>')
     if site and p.get('discussion_url'):
-        links.append(f'<a href="{html.escape(p["discussion_url"], quote=True)}">Обсуждение HN</a>')
+        links.append(f'<a href="{html.escape(p["discussion_url"], quote=True)}">HN discussion</a>')
     credit = p['source_name'] if site else 'r/' + p['subreddit']
     availability=availability_for([p])[:3]
-    where=('\n\nГде взять: '+', '.join(f'<a href="{html.escape(a["url"],quote=True)}">{html.escape(a["label"])}'+(' (preview)' if a.get('stage')=='preview' else '')+'</a>' for a in availability)) if availability else ''
+    where=('\n\nAvailable on: '+', '.join(f'<a href="{html.escape(a["url"],quote=True)}">{html.escape(a["label"])}'+(' (preview)' if a.get('stage')=='preview' else '')+'</a>' for a in availability)) if availability else ''
     return (f'{labels[priority(p)]}\n\n<b>{title}</b>\n\n' +
             (body + '\n\n' if body else '') + ' · '.join(links) +
             where+f'\n\n{html.escape(credit)}')

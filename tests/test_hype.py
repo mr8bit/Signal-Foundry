@@ -40,9 +40,9 @@ class Hype(unittest.TestCase):
         self.assertEqual(p['date_kind'],'updated')
         self.assertNotEqual(p['created_utc'],NOW)
         self.assertIsNone(p['original_published_at'])
-        self.assertEqual(signals.reference_time(p),(p['created_utc'],'обновление'))
+        self.assertEqual(signals.reference_time(p),(p['created_utc'],'update'))
         item=signals.build_items([p],CFG,NOW)[0]
-        self.assertIn('Обновление модели',item['reasons'])
+        self.assertIn('Model update',item['reasons'])
         self.assertEqual(item['column'],'models')
         self.assertEqual(item['news_at'],p['created_utc'])
 

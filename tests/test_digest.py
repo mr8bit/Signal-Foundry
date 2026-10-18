@@ -18,16 +18,16 @@ NOW=time.time()
 
 def item(id,score,hours=1,column='media',**changes):
     p=dict(id=id,title=f'Story {id}',url=f'https://example.com/{id}',summary='Summary text',source_name='Example',
-           sources=['Example'],related_sources=[],column=column,topic='Индустрия',published_at=NOW-hours*3600,score=score,
-           reasons=['Свежая тематическая новость'],metrics=[],coverage=1,domain='example.com',raw_score=None,
-           components=[dict(id='engagement',label='Популярность',points=0,max=10,available=False)])
+           sources=['Example'],related_sources=[],column=column,topic='Industry',published_at=NOW-hours*3600,score=score,
+           reasons=['Recent relevant news'],metrics=[],coverage=1,domain='example.com',raw_score=None,
+           components=[dict(id='engagement',label='Popularity',points=0,max=10,available=False)])
     p.update(changes);return p
 
 
 def data(items=None,rankings=None):
     items=items or [item('a',40),item('b',70),item('c',70,hours=3),item('old',99,hours=100)]
     return dict(generated_at=NOW,collected_at=NOW,scoring_version=SCORING_VERSION,items=items,statuses=[],sources=[],
-                signal_rankings=rankings or {'enterprise':[item('e',30,enterprise_reasons=['Корпоративное применение'])]})
+                signal_rankings=rankings or {'enterprise':[item('e',30,enterprise_reasons=['Enterprise use'])]})
 
 
 class VisibleText(HTMLParser):
@@ -62,8 +62,8 @@ class Digest(unittest.TestCase):
         self.assertEqual(ids('week'),['big-last-week','afternoon','quiet-new','small-yesterday','hot'])
         self.assertNotIn('august-model',ids('month'));self.assertIn('august-model',ids('year'))
         text=digest.markdown(data(rows),'trending',now=now)
-        self.assertIn('— импульс 21/25, балл 40/100',text)
-        self.assertIn('— значимость 59.6/75, балл 60/100',digest.markdown(data(rows),'week',now=now))
+        self.assertIn('— momentum 21/25, score 40/100',text)
+        self.assertIn('— significance 59.6/75, score 60/100',digest.markdown(data(rows),'week',now=now))
         value=json.loads(digest.signals_json(data(rows),'week',now=now))
         self.assertEqual((value['order'],value['period_hours'],value['items'][0]['significance']),('significance',168,59.6))
 
@@ -85,10 +85,10 @@ class Digest(unittest.TestCase):
         text=digest.markdown(data([hostile]),now=NOW)
         self.assertIn('[Break \\](javascript:alert(1)) \\*bold\\* next]()',text)
         self.assertNotIn('](javascript:',text.replace('\\](javascript:',''))
-        self.assertIn('## Enterprise: топ-5',text)
+        self.assertIn('## Enterprise: top 5',text)
         merged=item('m',80,also=[dict(source='Verge',title='Same ](javascript:x) story',url='javascript:x')])
-        line=next(l for l in digest.markdown(data([merged]),'week',now=NOW).splitlines() if 'Также пишут' in l)
-        self.assertEqual(line,'   - Также пишут: [Verge: Same \\](javascript:x) story]()')
+        line=next(l for l in digest.markdown(data([merged]),'week',now=NOW).splitlines() if 'Also covered by' in l)
+        self.assertEqual(line,'   - Also covered by: [Verge: Same \\](javascript:x) story]()')
         self.assertEqual(json.loads(digest.signals_json(data([merged]),'week',now=NOW))['items'][0]['also'][0]['url'],'')
         self.assertIn('/api/signals?sort=now&category=all&limit=20',text)
 

@@ -154,7 +154,7 @@ class RSS(unittest.TestCase):
 
     def test_news_format_and_untrusted_html(self):
         rendered = bot.render(self.sample())
-        self.assertIn('Релиз модели', rendered)
+        self.assertIn('Model release', rendered)
         self.assertIn('<b>Qwen', rendered)
         self.assertIn('Hugging Face</a>', rendered)
         self.assertIn('GitHub</a>', rendered)

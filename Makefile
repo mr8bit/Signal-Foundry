@@ -1,4 +1,4 @@
-.PHONY: init check build up down logs status backup https-up
+.PHONY: init check build up down logs status backup https-up deploy deploy-https
 
 init:
 	python3 ops.py init-env
@@ -10,15 +10,23 @@ check:
 	node --test tests/signal-ranking.test.cjs
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.https.yaml config --quiet
+	docker compose -f compose.yaml -f compose.release.yaml config --quiet
+	docker compose -f compose.yaml -f compose.release.yaml -f compose.https.yaml config --quiet
 
 build:
 	docker compose build --pull
 
 up:
-	docker compose up -d --wait --wait-timeout 120 worker web
+	docker compose up -d --build --wait --wait-timeout 120 worker web
 
 https-up:
-	docker compose -f compose.yaml -f compose.https.yaml up -d --wait --wait-timeout 120 worker web proxy
+	docker compose -f compose.yaml -f compose.https.yaml up -d --build --wait --wait-timeout 120 worker web proxy
+
+deploy:
+	docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait --wait-timeout 120 worker web
+
+deploy-https:
+	docker compose -f compose.yaml -f compose.release.yaml -f compose.https.yaml up -d --no-build --wait --wait-timeout 120 worker web proxy
 
 down:
 	docker compose --profile telegram down

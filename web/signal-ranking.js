@@ -11,7 +11,7 @@
   //   week/month/year  significance = editorial score without freshness (max 75): what mattered in the period
   const PERIODS={trending:{hours:12,order:'momentum'},day:{hours:24,order:'editorial'},
                  week:{hours:168,order:'significance'},month:{hours:720,order:'significance'},year:{hours:8760,order:'significance'}};
-  const MEASURES={momentum:{name:'Импульс',max:25},editorial:{name:'Балл',max:100},significance:{name:'Значимость',max:75}};
+  const MEASURES={momentum:{name:'Momentum',max:25},editorial:{name:'Score',max:100},significance:{name:'Significance',max:75}};
   function belongs(item,category){return category==='all'||(item.signal_categories||[item.column]).includes(category)}
   function metric(item,category){return item.signal_metrics?.[category]||null}
   function validMetric(item,category){const m=metric(item,category);return m&&metrics[category]?.includes(m.kind)&&typeof m.value==='number'&&Number.isFinite(m.value)&&m.value>=0?m:null}

@@ -52,7 +52,7 @@ class Collector:
             return True
         except Exception:
             LOG.exception('collection_failed job=%s',job['id'])
-            self.state.finish(job['id'],'Сбор не завершён; предыдущая публикация сохранена.')
+            self.state.finish(job['id'],'Collection did not complete; the previous publication was preserved.')
             return False
 
     def heartbeats(self):

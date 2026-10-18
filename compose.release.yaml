@@ -1,0 +1,16 @@
+# Pull the image published by GitHub Actions; do not build on the deployment host.
+x-release: &release
+  image: ${SIGNAL_RELEASE_IMAGE:-ghcr.io/mr8bit/signal-foundry:latest}
+  pull_policy: always
+
+services:
+  worker:
+    <<: *release
+  web:
+    <<: *release
+  publisher:
+    <<: *release
+  import:
+    <<: *release
+  backup:
+    <<: *release

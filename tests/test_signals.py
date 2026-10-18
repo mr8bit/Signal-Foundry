@@ -37,7 +37,7 @@ class Signals(unittest.TestCase):
         self.assertTrue(signals.enterprise_reasons(post(title='Agents for teams',selftext='Enterprise work spans tools. Most enterprises lack context.')))
         self.assertTrue(signals.enterprise_reasons(post(title='Admin update',selftext='Available for ChatGPT Business workspaces.')))
         case=post(title='Stampli cuts launch hours by 68% using Codex',category='lab',source_id='openai')
-        self.assertEqual(signals.enterprise_matches(case),{'Внедрение в компании':'case'})
+        self.assertEqual(signals.enterprise_matches(case),{'Business adoption':'case'})
         self.assertTrue(signals.enterprise_reasons(post(title='Samsung brings ChatGPT to employees',category='lab')))
         self.assertFalse(signals.enterprise_reasons(dict(case,category='community',source='rss')))
         self.assertFalse(signals.enterprise_reasons(post(title='How to build an agent with Claude',category='lab')))
@@ -59,9 +59,9 @@ class Signals(unittest.TestCase):
         self.assertEqual(relevance,{product['title']:30,news['title']:24,first['title']:18,later['title']:18,
                                     second['title']:12,third['title']:12,body['title']:18})
         reasons={x['title']:x['reasons'][0] for x in ranked}
-        self.assertEqual(reasons[first['title']],'Кейс клиента в блоге вендора')
-        self.assertEqual(reasons[second['title']],'Серия кейсов OpenAI News: 3-й за 7 дней')
-        self.assertEqual(ranked[0]['reasons'][0],'Корпоративная тема в заголовке')
+        self.assertEqual(reasons[first['title']],'Customer story on a vendor blog')
+        self.assertEqual(reasons[second['title']],'Customer story series OpenAI News: 3 in 7 days')
+        self.assertEqual(ranked[0]['reasons'][0],'Enterprise topic in the headline')
 
     def test_vendor_case_series_keeps_one_full_weight_story_per_week(self):
         cases=[post(id=str(d),title=f'Company{d} cuts costs with Codex',category='lab',source_id='openai',created_utc=NOW-d*86400)
@@ -73,7 +73,7 @@ class Signals(unittest.TestCase):
 
     def test_case_studies_need_an_outcome_and_vendor_product_titles_are_not_cases(self):
         for title in ('Introducing agentic video understanding with Gemini','Intelligent transcription with Gemini 3.5'):
-            self.assertNotIn('Внедрение в компании',signals.enterprise_reasons(post(title=title,category='lab')),title)
+            self.assertNotIn('Business adoption',signals.enterprise_reasons(post(title=title,category='lab')),title)
         case=post(title='The Den frees up 10 hours a week with ChatGPT Work',category='lab',source_id='openai',filter_mode='all')
         self.assertEqual(signals.enterprise_relevance([case])[0],18)
 
@@ -87,13 +87,13 @@ class Signals(unittest.TestCase):
         self.assertEqual(len(ranked),1);self.assertEqual(ranked[0]['title'],corporate['title'])
         self.assertIn('enterprise',ranked[0]['signal_categories'])
         self.assertIn('media',ranked[0]['signal_categories'])
-        self.assertIn('Безопасность и управление',ranked[0]['enterprise_reasons'])
+        self.assertIn('Security and governance',ranked[0]['enterprise_reasons'])
         self.assertNotIn('enterprise',ranked[0]['signal_metrics'])
 
     def test_category_rankings_keep_membership_and_metrics_after_dedupe(self):
         model=post(source_id='hf_models',category='model',content_kind='model',filter_mode='all',
                    provider_trending_score=123.5,observed_at=NOW-10,
-                   metrics=[dict(kind='likes',value=900,label='лайков')])
+                   metrics=[dict(kind='likes',value=900,label='likes')])
         article=post(id='article',source_id='openai',source_name='OpenAI News',category='lab')
         media=post(id='media',source_id='techcrunch',category='news')
         items=signals.build_items([model,article,media],CFG,NOW)
@@ -107,7 +107,7 @@ class Signals(unittest.TestCase):
         repo=post(category='repository',metrics=[dict(kind='stars',value=100000,label='всего')])
         self.assertEqual(signals.ranking_metadata([repo]),(['repos'],{}))
         model=post(category='model',provider_trending_score=float('nan'),metrics=[
-            dict(kind='downloads_month',value=1000000,label='скачиваний'),dict(kind='likes',value=0,label='лайков')])
+            dict(kind='downloads_month',value=1000000,label='скачиваний'),dict(kind='likes',value=0,label='likes')])
         categories,metrics=signals.ranking_metadata([model])
         self.assertEqual(categories,['models']);self.assertEqual(metrics['models']['kind'],'likes')
         self.assertEqual(metrics['models']['value'],0)
@@ -132,7 +132,7 @@ class Signals(unittest.TestCase):
         self.assertEqual(score,round(sum(x['points'] for x in parts),1))
         raw=next(x for x in parts if x['id']=='engagement')
         self.assertFalse(raw['available']);self.assertEqual(raw['points'],0)
-        self.assertIn('Есть численные показатели',reasons)
+        self.assertIn('Includes measurements',reasons)
         for x in parts:self.assertTrue(0<=x['points']<=x['max'])
 
     def test_freshness_decays_and_real_hn_points_are_used(self):
@@ -168,7 +168,7 @@ class Signals(unittest.TestCase):
 
     def test_model_relevance_and_velocity_popularity(self):
         known=post(content_kind='model',date_kind='trend',title='Qwen/Qwen3.8-27B',provider_trending_score=1000,
-                   metrics=[dict(kind='likes',value=5,label='лайков')])
+                   metrics=[dict(kind='likes',value=5,label='likes')])
         unknown=dict(known,title='someone/humanizer')
         parts=lambda p:{x['id']:x['points'] for x in signals.score(p,[p],NOW,CFG)[1]}
         self.assertEqual(parts(known)['relevance'],30);self.assertEqual(parts(unknown)['relevance'],24)

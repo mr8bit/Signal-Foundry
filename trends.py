@@ -80,8 +80,8 @@ def parse_github(data,source,now):
         period=''.join(row['period']);match=re.search(r'([\d,]+)\s+stars?\s+(today|this week|this month)',period)
         window=match[2] if match else ''
         period_kind={'today':'stars_day','this week':'stars_week','this month':'stars_month'}.get(window)
-        label={'today':'звёзд за сутки','this week':'звёзд за неделю','this month':'звёзд за месяц'}.get(window,'')
-        metrics=[metric('stars', ''.join(row['stars']),'звёзд всего'),metric('forks',''.join(row['forks']),'форков')]
+        label={'today':'stars / day','this week':'stars / week','this month':'stars / month'}.get(window,'')
+        metrics=[metric('stars', ''.join(row['stars']),'total stars'),metric('forks',''.join(row['forks']),'forks')]
         if match:metrics.insert(0,metric(period_kind,match[1],label))
         p=entry(source,title,title,row['url'],summary,rank,now,'repository',metrics)
         p['language']=''.join(row['language']).strip();posts.append(p)
@@ -99,12 +99,12 @@ def parse_models(data,source,now):
         task=row.get('pipeline_tag') or card.get('pipeline_tag')
         license=card.get('license')
         if isinstance(license,list):license=', '.join(str(x) for x in license)
-        fragments=[str(x) for x in [task,row.get('library_name'),('Лицензия: '+str(license)) if license else None] if x]
+        fragments=[str(x) for x in [task,row.get('library_name'),('License: '+str(license)) if license else None] if x]
         parameters=(row.get('safetensors') or {}).get('total')
-        if isinstance(parameters,(int,float)):fragments.append(f'Параметров: {parameters:,}')
-        if not fragments:fragments=['Модель в трендах Hugging Face. Подробности — в model card.']
+        if isinstance(parameters,(int,float)):fragments.append(f'Parameters: {parameters:,}')
+        if not fragments:fragments=['Trending on Hugging Face. See the model card for details.']
         p=entry(source,identifier,identifier,'https://huggingface.co/'+identifier,' · '.join(fragments),rank,now,'model',[
-            metric('likes',row.get('likes'),'лайков'),metric('downloads_month',row.get('downloads'),'скачиваний / мес.')],row.get('createdAt'))
+            metric('likes',row.get('likes'),'likes'),metric('downloads_month',row.get('downloads'),'downloads / month')],row.get('createdAt'))
         p['provider_trending_score']=row.get('trendingScore');p['pipeline_tag']=task;p['license']=license
         posts.append(p)
     return posts
@@ -123,7 +123,7 @@ def parse_papers(data,source,now):
         links=['https://arxiv.org/abs/'+identifier]
         if repo and urlsplit(repo).scheme in ('https','http'):links.append(repo)
         p=entry(source,identifier,title,'https://huggingface.co/papers/'+identifier,summary,rank,now,'paper',[
-            metric('upvotes',paper.get('upvotes'),'голосов'),metric('comments',row.get('numComments'),'комментариев')],paper.get('publishedAt') or row.get('publishedAt'),links)
+            metric('upvotes',paper.get('upvotes'),'upvotes'),metric('comments',row.get('numComments'),'comments')],paper.get('publishedAt') or row.get('publishedAt'),links)
         p['discussion_url']=p['url'];p['arxiv_id']=identifier
         posts.append(p)
     return posts
@@ -154,8 +154,8 @@ def parse_hype(data,source,now):
         if not math.isfinite(stamp) or stamp>now+300:continue
         value=row.get('stars')
         value=value if type(value) is int and value>=0 else None
-        unit,label={'github':('stars','звёзд всего'), 'huggingface':('likes','лайков'),
-                    'replicate':('runs','запусков всего'), 'reddit':('upvotes','апвоутов')}[origin]
+        unit,label={'github':('stars','total stars'), 'huggingface':('likes','likes'),
+                    'replicate':('runs','total runs'), 'reddit':('upvotes','upvotes')}[origin]
         kind='repository' if origin=='github' else 'model' if origin in ('huggingface','replicate') else None
         category='repository' if origin=='github' else 'model' if kind=='model' else 'community'
         spec=dict(source,category=category,filter_mode='all' if kind=='model' else 'keywords')

@@ -58,7 +58,7 @@ test('tabs select by when a story became news and sort by their own measure',()=
   assert.ok(ranking.inPeriod(FIXTURE[3],'year',NOW)&&!ranking.inPeriod(FIXTURE[3],'month',NOW));
 });
 test('the card headline is the measure the tab sorts by',()=>{
-  assert.deepEqual(ranking.headline(FIXTURE[0],'trending'),{name:'Импульс',max:25,order:'momentum',value:21});
-  assert.deepEqual(ranking.headline(FIXTURE[0],'day'),{name:'Балл',max:100,order:'editorial',value:40});
-  assert.deepEqual(ranking.headline(FIXTURE[4],'month'),{name:'Значимость',max:75,order:'significance',value:59.6});
+  assert.deepEqual(ranking.headline(FIXTURE[0],'trending'),{name:'Momentum',max:25,order:'momentum',value:21});
+  assert.deepEqual(ranking.headline(FIXTURE[0],'day'),{name:'Score',max:100,order:'editorial',value:40});
+  assert.deepEqual(ranking.headline(FIXTURE[4],'month'),{name:'Significance',max:75,order:'significance',value:59.6});
 });
