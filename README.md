@@ -137,7 +137,7 @@ Attention (0–25) joins every signal of interest in a story. Each channel is ra
 |---|---|---|
 | Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, HN/Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in `data/attention.sqlite3`, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
 | Discussion | HN points for the story's URL | hnrss items and HN Algolia lookups |
-| Reach | Independent platforms in our sources; other outlets reporting the same headline in Google News within 48 hours (the article's own outlet excluded) | Story grouping and Google News RSS |
+| Reach | Independent platforms in our sources; other outlets reporting the same headline in Google News within 48 hours (at least three shared headline words and two fifths of the shorter headline; the article's own outlet excluded) | Story grouping and Google News RSS |
 
 Each family keeps its best channel and the families combine as `25 × (1 − Π(1 − share))`: one strong signal counts fully, several add up, the total never exceeds 25. The score breakdown and the JSON `attention` field list every channel with its family, share and note.
 
@@ -151,13 +151,15 @@ Growth per day is measured only from stored readings at least six hours apart wi
 
 ### Deduplication and related coverage
 
-Shared Hugging Face/GitHub links, normalized article URLs and exact titles identify duplicates. URL normalization removes tracking parameters and fragments; artifact keys ignore repository file paths and branches. For RSS duplicates, feed position and excerpt length approximate preference because votes are unavailable. Separate releases sharing a repository root may therefore share an identity in the Telegram queue.
+Shared Hugging Face/GitHub links, normalized article URLs and exact titles identify duplicates. URL normalization removes tracking parameters and fragments; artifact keys ignore repository file paths and branches. For RSS duplicates, feed position and excerpt length approximate preference because votes are unavailable. Separate releases sharing a repository root may therefore share an identity in the Telegram queue. On the dashboard a shared link or title groups articles only while consecutive reports are at most 48 hours apart: two newsletter issues titled "not much happened today" stay separate. Groups containing a model, repository or paper are not split, because a link identifies the artifact however late it comes.
 
 The dashboard also merges matching articles published within 48 hours. Shared version anchors require at least half of the shorter title's meaningful terms to match and no conflicting model qualifiers. Without a shared version, at least four terms and Jaccard similarity of 0.4 are required. Same-platform headlines need similarity of 0.7 and four shared terms. Groups require pairwise similarity, so A≈B≈C does not automatically merge A with C.
 
+Outlets often retell a story in other words, so articles from different platforms also merge as a retold story: cosine similarity of at least 0.40 over the title (weighted twice) and the first 400 characters of the text, with words weighted by inverse document frequency over the build, plus a rare name in both titles. A name is a capitalised word (not a sentence start in the text), an acronym or a version; parameter sizes, years, generic acronyms (MoE, OCR, LLM) and vendor names are not names, and a name counts as rare when at most eight stories of the build contain it. Headlines about different companies (named in the title, or the lab whose blog published the post) never match.
+
 Artifact cards remain separate: model variants are distinct. Official sources are preferred as article representatives, followed by publications and earlier reports. Multi-topic newsletters do not become lead cards. Merged reports remain linked under **Also covered by** and in the `also` API field. The score breakdown (the headline score link on a card) lists every report behind the card with its link: merged ones, including entries grouped by a shared model or repository link, and related coverage that adds points without merging; the API exposes the same list as `story_links`. Story IDs follow stable identities so saved cards survive additional coverage.
 
-Related coverage within 72 hours can add coverage points without merging cards. Matching uses version tokens or sufficiently similar title stems; bare numbers and parameter sizes are not model-version identities.
+Related coverage within 72 hours can add coverage points without merging cards. Matching uses version tokens or sufficiently similar title stems; bare numbers and parameter sizes are not model-version identities. Articles also count as related at a retold-story similarity of 0.25 when the titles share a rare name, the texts share two rare names, or both titles name the same company and share a rare word ("Anthropic … junior staff" / "Anthropic … less junior").
 
 ## Sources and filters
 

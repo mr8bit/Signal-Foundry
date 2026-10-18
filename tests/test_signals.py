@@ -334,6 +334,45 @@ class Signals(unittest.TestCase):
         first=signals.build_items(deepseek[:1],CFG,NOW)[0]['id']
         self.assertEqual(merged[0]['id'],first)
 
+    def test_retold_stories_merge_or_add_coverage_across_outlets(self):
+        n=[0]
+        def article(title,source,text='',hours=1,category='news'):
+            n[0]+=1
+            return post(id=f'r{n[0]}',title=title,source_id=source,source_name=source.title(),category=category,filter_mode='all',
+                        article_url=f'https://{source}.example/{n[0]}',url=f'https://{source}.example/{n[0]}',selftext=text,links=[],
+                        created_utc=NOW-hours*3600)
+        verge=article('ChatGPT can peek at your Chrome tabs now','verge','OpenAI is letting ChatGPT read your open Chrome tabs.',hours=20)
+        decoder=article('ChatGPT becomes a full Chrome browser assistant that reads and acts on your open tabs','decoder',
+                        'The ChatGPT extension for Chrome now reads open tabs and acts on them.',hours=4)
+        junior=article('Anthropic has nearly stopped hiring junior staff because AI agents now work six times as many hours','decoder',
+                       'Agents now log six times the hours of people, so Anthropic hires few junior engineers.',hours=6)
+        less=article('Anthropic says its workforce has become less junior and is spending more time in meetings','techcrunch',
+                     'Fewer junior engineers join Anthropic while agents log more hours, its workforce data shows.',hours=8)
+        singapore=[article('Google DeepMind and Singapore Government collaborate on a scam detection model','deepmind',category='lab',hours=3),
+                   article('Anthropic opens Singapore office and signs MOU with the Government of Singapore','anthropic',category='lab',hours=2)]
+        filler=[article(f'Unrelated story number {i} about chips and courts','wired',hours=30+i) for i in range(6)]
+        items={x['title']:x for x in signals.build_items([verge,decoder,junior,less,*singapore,*filler],CFG,NOW)}
+        # Retold in other words, the Chrome story is one card; the junior story is one story told twice: coverage, not a merge.
+        chrome=[x for x in items.values() if 'Chrome' in x['title']]
+        self.assertEqual(len(chrome),1);self.assertEqual(chrome[0]['coverage'],2)
+        self.assertEqual(items[junior['title']]['coverage'],2);self.assertEqual(items[less['title']]['coverage'],2)
+        # Two companies in one country are two stories.
+        self.assertTrue(all(items[s['title']]['coverage']==1 for s in singapore))
+
+    def test_shared_keys_merge_articles_only_within_days(self):
+        issue=lambda id,days:post(id=id,title='[AINews] not much happened today',source_id='latent',source_name='Latent Space',
+                                  category='newsletter',filter_mode='all',article_url=f'https://latent.example/{id}',url=f'https://latent.example/{id}',
+                                  selftext='',links=[],created_utc=NOW-days*86400)
+        items=signals.build_items([issue('a',1),issue('b',6)],CFG,NOW)
+        self.assertEqual(len(items),2);self.assertEqual(len({x['id'] for x in items}),2)
+        # A model card keeps a late thread linking to it: the link identifies the artifact.
+        model=post(id='m',title='bfl/flux-klein',source_id='hf_models',category='model',content_kind='model',date_kind='trend',filter_mode='all',
+                   url='https://huggingface.co/bfl/flux-klein',article_url='https://huggingface.co/bfl/flux-klein',selftext='',links=[],created_utc=NOW-3600)
+        thread=post(id='t',source='rss',subreddit='StableDiffusion',title='FLUX Klein weights are out',source_id=None,source_name=None,
+                    permalink='/r/StableDiffusion/comments/x/',url='https://huggingface.co/bfl/flux-klein',article_url='',selftext='',
+                    links=['https://huggingface.co/bfl/flux-klein'],created_utc=NOW-4*86400)
+        self.assertEqual(len(signals.build_items([model,thread],CFG,NOW)),1)
+
     def test_digests_never_lead_and_short_same_outlet_titles_stay_apart(self):
         digest_issue=post(id='d1',title="Import AI 465: Open vs closed gaps; Kimi K3; Demis' big policy plan",source_id='importai',
                           source_name='Import AI',category='newsletter',filter_mode='all',article_url='https://importai.example/465',

@@ -172,8 +172,9 @@ def title_tokens(title):
 
 
 def parse_gnews(body,title,own_host=''):
-    """Distinct other outlets in Google News results whose headline shares at least half of ours (three words minimum).
-    The article's own outlet and its reprints under the same name are not coverage."""
+    """Distinct other outlets in Google News results whose headline shares two fifths of ours (three words minimum).
+    Outlets retell a headline ("removes language that raised scraping concerns" / "removes controversial scraping
+    language"), so half was too strict. The article's own outlet and its reprints under the same name are not coverage."""
     own=re.sub(r'\W','',own_host.removeprefix('www.').rsplit('.',1)[0].casefold())
     try:root=ET.fromstring(body)
     except ET.ParseError:raise RuntimeError('Google News returned invalid XML') from None
@@ -181,7 +182,7 @@ def parse_gnews(body,title,own_host=''):
     for item in root.findall('./channel/item'):
         theirs=title_tokens(re.sub(r'\s+-\s+[^-]+$','',item.findtext('title','')))
         shared=ours&theirs
-        if len(shared)>=3 and len(shared)>=0.5*min(len(ours),len(theirs)):
+        if len(shared)>=3 and len(shared)>=0.4*min(len(ours),len(theirs)):
             name=re.sub(r'\W','',(item.findtext('source','') or '').casefold())
             if name and not (own and (own in name or name in own)):outlets.add(name)
     return len(outlets)

@@ -1,6 +1,6 @@
 """Explainable editorial ranking. No inferred popularity or growth metrics."""
 from bisect import bisect_left,bisect_right
-from collections import defaultdict
+from collections import Counter,defaultdict
 from hashlib import sha256
 import math
 import re
@@ -274,15 +274,6 @@ def editorial_basis(p,members,cfg=None):
     return values,dict(priority=priority_,measured=measured,repository=repository,unknown_model=unknown_model)
 
 
-def momentum_proxy(weight,baseline):
-    """Trending Now popularity of a story without a platform metric: its editorial weight against recent publications."""
-    sample=(baseline or {}).get(('publications','weight'),[])
-    if len(sample)<MIN_SAMPLE:
-        return 10*weight/50,f'editorial weight {weight}/50; short history, fixed scale'
-    share=(bisect_left(sample,weight)+0.5*(bisect_right(sample,weight)-bisect_left(sample,weight)))/len(sample)
-    return 10*share,f'editorial weight {weight}/50, above {round(100*share)}% of publications over {BASELINE_DAYS} days ({len(sample)} entries)'
-
-
 # Attention channels from stored readings (attention.py), each ranked against its own recent values.
 # Platform: interest on the story's own platform. Discussion: HN. Reach: how widely the story spread.
 CHANNELS={'github_stars_day':('platform','GitHub stars / day',1000),'hf_trending':('platform','HF trendingScore',1000),
@@ -416,8 +407,107 @@ def same_owner(p,q):
     return any(t in text for t in tokens)
 
 
-def related_stories(stories):
+# Outlets retell a story in their own words ("ChatGPT can peek at your Chrome tabs now" / "ChatGPT becomes a full
+# Chrome browser assistant"), so shared title words alone miss most cross-outlet coverage. Retold stories still
+# share a rare name: a product, person or version. The match weighs the title and the lead of the text by inverse
+# document frequency over the build and requires such a name; vendor names appear in every other story.
+LEAD_CHARS=400
+RARE_DF=8
+STORY_MERGE=0.40
+STORY_RELATED=0.25
+STORY_STOP={'the','and','for','with','from','that','this','these','those','has','have','had','was','were','are','its','his',
+            'her','their','they','them','our','your','you','who','what','when','why','how','will','can','could','would',
+            'should','may','might','says','said','say','new','now','just','more','most','than','then','into','over','after',
+            'about','out','off','via','not','all','any','some','one','two','three','also','like','here','there','still',
+            'even','way','ways','lets','let','get','gets','got','make','makes','made','use','uses','using','used','first',
+            'model','models','release','released','releases','launch','launches','launched','introducing','introduces',
+            'announces','unveils','meet','today','week'}
+COMMON_NAMES={'ai','api','llm','llms','gpu','gpus','moe','vram','gguf','sota','rag','mcp','cpu','ceo','ocr','tts','asr','vla',
+              'openai','google','anthropic','meta','microsoft','nvidia','apple','amazon','aws','deepmind','chatgpt','claude',
+              'gemini','gpt','hugging','face','github','the','new','how','why','what'}
+
+
+# Two headlines about different companies are different news even when they share a place or a topic
+# ("DeepMind and Singapore collaborate" / "Anthropic opens Singapore office").
+VENDORS={'openai':'openai','chatgpt':'openai','google':'google','deepmind':'google','gemini':'google','anthropic':'anthropic',
+         'claude':'anthropic','meta':'meta','microsoft':'microsoft','nvidia':'nvidia','apple':'apple','amazon':'amazon',
+         'aws':'amazon','mistral':'mistral','vercel':'vercel','cloudflare':'cloudflare','hugging':'huggingface','xai':'xai',
+         'grok':'xai','deepseek':'deepseek','alibaba':'alibaba','qwen':'alibaba','tencent':'tencent','ibm':'ibm',
+         'salesforce':'salesforce','spacex':'spacex','perplexity':'perplexity','cursor':'cursor'}
+
+
+def vendors(p):
+    """Companies a headline is about: named in it, or the lab whose own blog published it."""
+    found={VENDORS[w] for w in re.findall(r'[a-z]+',p['title'].casefold()) if w in VENDORS}
+    if p.get('category') in ('lab','cloud'):
+        label=publisher(p).split('.')[0]
+        if label in VENDORS:found.add(VENDORS[label])
+    return found
+
+
+def story_words(text):
+    return [w for w in re.findall(r"\$?\d[\d.,]*[%bkmt]?|[a-z][a-z0-9.+\-]*[a-z0-9]",text.casefold())
+            if len(w)>=3 and w not in STORY_STOP]
+
+
+def story_names(text,title=False):
+    """Capitalised words, acronyms and versions. In a lead a sentence's first word is not a name; titles keep it."""
+    found=set()
+    for m in re.finditer(r"[A-Za-z][A-Za-z0-9.+\-]*[A-Za-z0-9]",text):
+        word=m.group(0)
+        start=not title and (m.start()==0 or re.search(r'[.!?:]\s*$',text[max(0,m.start()-3):m.start()]))
+        # A version names a product (v4.1-flash-1017); a size or a year (600B, 1M, 2026) is shared by unrelated news.
+        versioned=is_version(word.casefold()) and not re.fullmatch(r'\d+(?:\.\d+)?[bkmt]?',word.casefold())
+        if versioned or (word[0].isupper() and not start and not re.search(r'\d',word)):
+            found|={part for part in [word.casefold(),*word.casefold().split('-')] if len(part)>=2}
+    return found-COMMON_NAMES
+
+
+class StoryIndex:
+    """Title-and-lead similarity of article stories in one build."""
+    def __init__(self,posts):
+        self.terms,self.titles={},{}
+        for p in posts:
+            lead=(p.get('article_text') or p.get('selftext',''))[:LEAD_CHARS]
+            self.terms[id(p)]=(Counter(story_words(p['title'])*2+story_words(lead)),
+                               story_names(p['title'],title=True),story_names(lead[:200]))
+            self.titles[id(p)]=(set(story_words(p['title'])),vendors(p))
+        df=Counter(w for counts,_,_ in self.terms.values() for w in counts)
+        size=len(self.terms)
+        self.idf=lambda w:math.log((size+1)/(df.get(w,0)+1))+1
+        self.rare=math.log((size+1)/(RARE_DF+1))+1
+        self.vectors={}
+        for key,(counts,_,_) in self.terms.items():
+            weights={w:n*self.idf(w) for w,n in counts.items()}
+            norm=math.sqrt(sum(x*x for x in weights.values())) or 1
+            self.vectors[key]={w:x/norm for w,x in weights.items()}
+
+    def compare(self,a,b):
+        """(cosine, rare names shared by the titles, rare names shared anywhere)."""
+        va,vb=self.vectors[id(a)],self.vectors[id(b)]
+        cosine=sum(x*vb.get(w,0) for w,x in va.items())
+        (_,ta,la),(_,tb,lb)=self.terms[id(a)],self.terms[id(b)]
+        rare=lambda names:{w for w in names if self.idf(w)>=self.rare}
+        return cosine,rare(ta&tb),rare((ta|la)&(tb|lb))
+
+    def same_story(self,a,b,threshold):
+        """Merging needs a rare name in both titles. Coverage also takes two shared rare names from the leads, or
+        the same company in both titles with a rare title word ("Anthropic … junior staff" / "Anthropic … less junior")."""
+        (wa,va),(wb,vb)=self.titles[id(a)],self.titles[id(b)]
+        if va and vb and not va&vb:return False
+        cosine,titles,anywhere=self.compare(a,b)
+        if cosine<threshold:return False
+        if threshold>=STORY_MERGE:return bool(titles)
+        return bool(titles) or len(anywhere)>=2 or bool(va&vb and any(self.idf(w)>=self.rare for w in wa&wb))
+
+
+def related_stories(stories,retelling=None):
     """Other outlets carrying the same story within STORY_WINDOW; they raise coverage but are not merged."""
+    articles=[p for p,_ in stories if not p.get('content_kind')]
+    retelling=retelling or StoryIndex(articles)
+    # Articles by time, so each one is compared only with the stories inside its window.
+    timeline=sorted((reference_time(p)[0],j) for j,(p,_) in enumerate(stories) if not p.get('content_kind'))
+    times=[t for t,_ in timeline]
     prints=[fingerprint(p) for p,_ in stories]
     index=defaultdict(set)
     for i,(versions,stems) in enumerate(prints):
@@ -428,9 +518,15 @@ def related_stories(stories):
         candidates=set().union(*(index[t] for t in versions|stems)) if versions|stems else set()
         own={publisher(m) for m in members}
         found=[]
-        for j in candidates-{i}:
+        retold=set()
+        if not p.get('content_kind'):
+            t=reference_time(p)[0]
+            nearby=timeline[bisect_left(times,t-STORY_WINDOW):bisect_right(times,t+STORY_WINDOW)]
+            retold={j for _,j in nearby if j!=i and publisher(stories[j][0]) not in own
+                    and retelling.same_story(p,stories[j][0],STORY_RELATED)}
+        for j in (candidates|retold)-{i}:
             q,others=stories[j]
-            if abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
+            if j in retold or abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
                 found+=[m for m in others if publisher(m) not in own]
         result.append(found)
     return result
@@ -483,11 +579,15 @@ def similar_articles(a,b):
     return len(shared)>=4 and jaccard>=0.4
 
 
-def merge_similar(stories):
+def merge_similar(stories,index=None):
     """Cluster article stories (not models, repositories or papers) that report the same news.
 
     Complete linkage: a story joins a cluster only if it matches every story already in it, so a chain
-    A~B~C never merges unrelated A and C. Stories are visited in publication order: the first report anchors."""
+    A~B~C never merges unrelated A and C. Stories are visited in publication order: the first report anchors.
+    Articles match by title (similar_articles) or, across outlets, as a retold story (StoryIndex)."""
+    index=index or StoryIndex([s[0] for s in stories if not s[0].get('content_kind')])
+    def similar(p,q):
+        return similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,STORY_MERGE)
     order=sorted(range(len(stories)),key=lambda i:stories[i][0]['created_utc'])
     clusters=[]
     for i in order:
@@ -495,7 +595,7 @@ def merge_similar(stories):
         target=None
         if not p.get('content_kind'):
             target=next((c for c in clusters if not stories[c[0]][0].get('content_kind') and all(
-                abs(reference_time(p)[0]-reference_time(stories[j][0])[0])<=MERGE_WINDOW and similar_articles(p,stories[j][0]) for j in c)),None)
+                abs(reference_time(p)[0]-reference_time(stories[j][0])[0])<=MERGE_WINDOW and similar(p,stories[j][0]) for j in c)),None)
         if target is None:clusters.append([i])
         else:target.append(i)
     return clusters
@@ -516,6 +616,20 @@ def story_keys(p):
     ks=bot.keys(p)
     external={k for k in ks if k.startswith(ARTIFACT_KEYS)}-{bot.canonical(p.get('url',''))}
     return ks-external if len(external)>=2 else ks
+
+
+def time_chains(members):
+    """Split a group of articles where consecutive reports are more than MERGE_WINDOW apart.
+
+    Shared keys (a link, an identical title) are only evidence of one story within days: two newsletter issues
+    titled "not much happened today" or a column quoting a week-old post are separate news. A group with a model,
+    repository or paper stays whole: links to an artifact identify it however late they come."""
+    if len(members)<2 or any(m.get('content_kind') for m in members):return [members]
+    chains=[]
+    for m in sorted(members,key=lambda m:m['created_utc']):
+        if chains and m['created_utc']-chains[-1][-1]['created_utc']<=MERGE_WINDOW:chains[-1].append(m)
+        else:chains.append([m])
+    return chains
 
 
 def representative(members,chosen):
@@ -559,8 +673,13 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None,readings=N
         members={}
         for key in aliases:
             for m in index[key]: members[(source_id(m),m['id'])]=m
-        members=list(members.values())
-        grouped.append((representative(members,p),members,aliases))
+        chains=time_chains(list(members.values()))
+        for chain in chains:
+            # bot.select may hand back a copy of its choice (cloud availability), so identity only matters after a split.
+            chosen=p if len(chains)==1 or any(m is p for m in chain) else min(chain,key=lambda m:(m.get('category')!='lab',m.get('feed_rank',0)))
+            # Each part keeps only its own keys, so the parts get different stable ids.
+            keys=aliases if len(chains)==1 else aliases&set().union(*(story_keys(m) for m in chain))
+            grouped.append((representative(chain,chosen),chain,keys))
     stories,merged=[],[]
     for cluster in merge_similar(grouped):
         parts=[grouped[i] for i in cluster]

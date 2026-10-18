@@ -63,6 +63,11 @@ class Attention(unittest.TestCase):
         # The article's own outlet is not coverage of it.
         self.assertEqual(attention.parse_gnews(body,'DeepSeek releases V4.1 Flash, beating rivals on agents','www.reuters.com'),1)
         self.assertIsNone(attention.story_query('AI news'))
+        retold=b'''<rss><channel>
+          <item><title>Meta removes language that raised scraping and AI training concerns - TechCrunch</title><source>TechCrunch</source></item>
+          <item><title>Meta removes controversial scraping language from its commercial terms - Crypto Briefing</title><source>Crypto Briefing</source></item>
+          <item><title>Meta posts record quarterly revenue - CNBC</title><source>CNBC</source></item></channel></rss>'''
+        self.assertEqual(attention.parse_gnews(retold,'Meta removes language that may have allowed it to scrape news sites'),2)
 
     def test_most_read_list_is_found_after_its_heading(self):
         page=b'''<nav><ul><li><a href="/about">About</a></li></ul></nav><h2>Most<br>Popular</h2><div><ol>
