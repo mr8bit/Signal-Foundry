@@ -1,0 +1,9 @@
+# Only runtime source enters the build context, including on fresh checkouts.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!*.py
+!config.json
+!web/
+!web/**

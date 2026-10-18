@@ -1,0 +1,38 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked runtime dependencies
+        run: python -m pip install --require-hashes -r requirements.txt
+      - name: Tests and Compose validation
+        run: make check
+      - name: Build runtime image
+        run: docker build --tag reddit-reposter:ci .
+      - name: Smoke test non-root image without network or persistent data
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /app/data:rw,uid=10001,gid=10001,mode=0700
+          --tmpfs /tmp:rw,mode=1777
+          --entrypoint python reddit-reposter:ci -c
+          "import os; from production import create_app; assert os.getuid()==10001;
+          result=[]; body=b''.join(create_app()({'PATH_INFO':'/health/live','REQUEST_METHOD':'GET'},lambda status,headers:result.append(status)));
+          assert result==['200 OK'] and b'alive' in body"
+      - name: Validate proxy configuration
+        run: docker compose -f compose.yaml -f compose.https.yaml run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

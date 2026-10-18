@@ -1,0 +1,10 @@
+{$SIGNAL_DOMAIN:localhost} {
+	encode zstd gzip
+	request_body {
+		max_size 16KB
+	}
+	# Metrics are available on the local application port for monitoring.
+	@metrics path /metrics
+	respond @metrics 404
+	reverse_proxy web:8765
+}

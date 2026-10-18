@@ -1,0 +1,20 @@
+import os
+bind=os.getenv('SIGNAL_BIND','0.0.0.0:8765')
+workers=int(os.getenv('WEB_WORKERS','2'))
+threads=int(os.getenv('WEB_THREADS','4'))
+worker_class='gthread'
+timeout=30
+graceful_timeout=30
+keepalive=5
+max_requests=5000
+max_requests_jitter=500
+worker_tmp_dir='/tmp'
+control_socket_disable=True
+accesslog='-'
+errorlog='-'
+loglevel=os.getenv('LOG_LEVEL','info').lower()
+access_log_format='%(h)s %(m)s %(U)s %(s)s %(L)s'
+forwarded_allow_ips=os.getenv('FORWARDED_ALLOW_IPS','127.0.0.1')
+limit_request_line=4094
+limit_request_fields=50
+limit_request_field_size=4094

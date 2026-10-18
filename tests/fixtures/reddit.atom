@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>LocalLLaMA: top scoring links</title>
+<entry>
+<id>t3_rssdemo</id><title>Qwen released open weights: benchmark 50 tok/s</title>
+<category term="LocalLLaMA" label="r/LocalLLaMA"/>
+<link href="https://www.reddit.com/r/LocalLLaMA/comments/rssdemo/example/"/>
+<updated>2026-10-17T20:00:00+00:00</updated>
+<content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;img src="https://preview.redd.it/demo.jpg"/&gt;&lt;/td&gt;&lt;td&gt;&lt;p&gt;Open weights with 50 tok/s on 24 GB VRAM. Benchmark details are available in the model card.&lt;/p&gt;&lt;p&gt;&lt;a href="https://huggingface.co/example/demo-model"&gt;Model card&lt;/a&gt; and &lt;a href="https://github.com/example/inference"&gt;code&lt;/a&gt;.&lt;/p&gt; submitted by &lt;a href="https://www.reddit.com/user/demo"&gt;/u/demo&lt;/a&gt; to &lt;a href="https://www.reddit.com/r/LocalLLaMA"&gt;r/LocalLLaMA&lt;/a&gt;&lt;br/&gt;&lt;span&gt;&lt;a href="https://huggingface.co/example/demo-model"&gt;[link]&lt;/a&gt;&lt;/span&gt; &lt;span&gt;&lt;a href="https://www.reddit.com/r/LocalLLaMA/comments/rssdemo/example/"&gt;[comments]&lt;/a&gt;&lt;/span&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content>
+</entry>
+</feed>

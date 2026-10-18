@@ -1,0 +1,13 @@
+[
+  {
+    "id": "demo",
+    "subreddit": "LocalLLaMA",
+    "title": "Qwen example release: open weights and benchmark",
+    "score": 420,
+    "created_utc": 1792267200,
+    "link_flair_text": "New Model",
+    "url": "https://huggingface.co/example/demo-model",
+    "selftext": "Synthetic fixture, not real news. Benchmark: 50 tok/s, 24 GB VRAM.",
+    "permalink": "/r/LocalLLaMA/comments/demo/example/"
+  }
+]
