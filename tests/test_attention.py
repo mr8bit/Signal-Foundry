@@ -95,6 +95,12 @@ class Attention(unittest.TestCase):
         calls=len(http.urls)
         attention.refresh([article],cfg,NOW+60,store=self.store,http=http)
         self.assertEqual(len(http.urls),calls)
+        # A fresh story is checked again within the hour; an older one waits for the regular TTL.
+        attention.refresh([article],cfg,NOW+2800,store=self.store,http=http)
+        self.assertEqual(len(http.urls),calls+2)
+        old=dict(article,created_utc=NOW-20*3600)
+        attention.refresh([old],cfg,NOW+2800+2800,store=self.store,http=http)
+        self.assertEqual(len(http.urls),calls+2)
 
     def test_attention_combines_families_without_double_counting(self):
         repo=hype_repo(5000)

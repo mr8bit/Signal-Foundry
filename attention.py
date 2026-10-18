@@ -30,6 +30,9 @@ KEEP_SECONDS=30*DAY
 GROWTH={'github_stars':'github_stars_day','hf_likes':'hf_likes_day','replicate_runs':'replicate_runs_day'}
 DEFAULTS=dict(enabled=True,budget_seconds=150,lookup_hours=72,
               ttl_seconds=dict(hn=7200,hf=10800,github=21600,substack=10800,gnews=10800,most_read=3600),
+              # A story found minutes after publication has no other outlets or HN thread yet; while it can still
+              # trend (Trending Now covers 12 hours) its coverage and discussion are checked again sooner.
+              fresh_hours=12,fresh_ttl_seconds=dict(hn=1800,gnews=2700),
               limits=dict(hn=150,hf=60,github=60,github_without_token=15,substack=20,gnews=15),
               gnews_categories=['news','lab','newsletter'],substack_sources=[],most_read={})
 
@@ -216,9 +219,11 @@ class Lookups:
 
     def open(self):return time.time()<self.deadline and not (self.stop is not None and self.stop.is_set())
 
-    def take(self,kind,key):
+    def take(self,kind,key,published=None):
         limit=self.cfg['limits']['github_without_token'] if kind=='github' and not self.token else self.cfg['limits'].get(kind,50)
-        if not self.open() or self.counts[kind]>=limit or not self.store.due(key,kind,self.cfg['ttl_seconds'][kind],self.now):return False
+        fresh=published is not None and self.now-published<self.cfg['fresh_hours']*3600 and kind in self.cfg['fresh_ttl_seconds']
+        ttl=self.cfg['fresh_ttl_seconds'][kind] if fresh else self.cfg['ttl_seconds'][kind]
+        if not self.open() or self.counts[kind]>=limit or not self.store.due(key,kind,ttl,self.now):return False
         self.counts[kind]+=1;return True
 
     def fetch(self,kind,key,url,headers=None,ttl=None,validator=None):
@@ -294,14 +299,14 @@ def refresh(posts,cfg,now=None,stop=None,store=None,http=None):
     for key,(url,p) in articles.items():
         if p.get('source_id') in settings['substack_sources'] and look.take('substack',key):rows+=look.substack(key,url)
     for key,(url,p) in articles.items():
-        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key):rows+=look.gnews(key,p['title'])
+        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key,p['created_utc']):rows+=look.gnews(key,p['title'])
     for key,p in artifacts.items():
         if key.startswith('huggingface.co/') and p.get('content_kind')=='model' and p.get('provider_trending_score') is None and look.take('hf',key):
             rows+=look.hf(key)
     for key,p in artifacts.items():
         if key.startswith('github.com/') and p.get('source_id')!='github_trending' and look.take('github',key):rows+=look.github(key)
     for key,(url,p) in articles.items():
-        if look.take('hn',key):rows+=look.hn(key,url)
+        if look.take('hn',key,p['created_utc']):rows+=look.hn(key,url)
     written+=store.record(rows,now)
     LOG.info('attention_refresh readings=%s lookups=%s errors=%s',written,dict(look.counts),dict(look.errors))
     return dict(readings=written,lookups=dict(look.counts),errors=dict(look.errors))
