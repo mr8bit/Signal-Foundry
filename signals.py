@@ -457,6 +457,23 @@ def representative(members,chosen):
     return chosen if chosen in labs or not labs else labs[0]
 
 
+def member_url(m):
+    """Where a report lives: a Reddit thread itself, otherwise the article or artifact."""
+    if m.get('permalink'):return 'https://www.reddit.com'+m['permalink']
+    return m.get('article_url') or m.get('url') or ''
+
+
+def story_links(url,discussion,members,related):
+    """Every report behind a card: merged ones (same links, title or story) and related coverage that only adds points."""
+    seen={url,discussion};links=[]
+    for kind,group in (('merged',members),('related',related)):
+        for m in sorted(group,key=lambda m:m['created_utc']):
+            link=member_url(m)
+            if urlsplit(link).scheme not in ('http','https') or link in seen:continue
+            seen.add(link);links.append(dict(kind=kind,source=source_name(m),title=m['title'],url=link,published_at=m['created_utc']))
+    return links
+
+
 def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None):
     posts=[english_post(p) for p in posts]
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
@@ -514,7 +531,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None,baseline=None):
             domain=urlsplit(url).hostname or '',coverage=len({publisher(m) for m in members+related}),
             sources=list(dict.fromkeys(source_name(m) for m in members)),
             related_sources=list(dict.fromkeys(source_name(m) for m in related)),
-            also=also,
+            also=also,story_links=story_links(url,discussion,members,related),
             # When the story became news (earliest report, model/paper creation, a repository's first day in trends):
             # every period tab filters by it.
             news_at=news_at,

@@ -140,7 +140,8 @@ def compact(p):
                 score_components={c['id']:(c['points'] if c.get('available',True) else None) for c in p.get('components',[])},
                 momentum=momentum(p),momentum_parts=momentum_parts(p),significance=significance(p),news_at=iso(news_time(p)),
                 enterprise_reasons=p.get('enterprise_reasons') or [],
-                also=[dict(source=a['source'],title=a['title'],url=http_url(a.get('url'))) for a in p.get('also',[])],cloud_availability=p.get('cloud_availability',[]))
+                also=[dict(source=a['source'],title=a['title'],url=http_url(a.get('url'))) for a in p.get('also',[])],
+                story_links=[dict(kind=l['kind'],source=l['source'],title=l['title'],url=http_url(l['url']),published_at=iso(l['published_at'])) for l in p.get('story_links',[])],cloud_availability=p.get('cloud_availability',[]))
 
 
 def signals_json(data,period=DEFAULT_PERIOD,category='all',limit=DEFAULT_LIMIT,now=None):
@@ -181,7 +182,10 @@ def md_item(position,p,order='editorial'):
     if p.get('metrics'):lines.append('   - Metrics: '+'; '.join(f'{number(m["value"])} {md_text(m["label"])}' for m in p['metrics']))
     if p.get('cloud_availability'):lines.append('   - Available on: '+', '.join(f'[{md_text(a["label"])}'+(' (preview)' if a.get('stage')=='preview' else '')+f']({md_url(a["url"])})' for a in p['cloud_availability']))
     if p.get('enterprise_reasons'):lines.append('   - Enterprise: '+md_text('; '.join(p['enterprise_reasons'])))
-    if p.get('also'):lines.append('   - Also covered by: '+'; '.join(f'[{md_text(a["source"])}: {md_text(a["title"])}]({md_url(a.get("url"))})' for a in p['also']))
+    links=p.get('story_links') or [dict(a,kind='merged') for a in p.get('also',[])]
+    for kind,heading in (('merged','Also covered by'),('related','Related coverage')):
+        rows=[l for l in links if l['kind']==kind]
+        if rows:lines.append(f'   - {heading}: '+'; '.join(f'[{md_text(l["source"])}: {md_text(l["title"])}]({md_url(l.get("url"))})' for l in rows))
     if p.get('discussion_url') and p['discussion_url']!=p.get('url'):lines.append(f'   - Discussion: <{md_url(p["discussion_url"])}>')
     if p.get('summary'):
         summary=md_text(p['summary'])
@@ -225,7 +229,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 ## Data
 
 - [Markdown digest]({base_url}/signals.md): overall ranking and top five per category. The API defaults to 48 hours; use `sort=trending` for the dashboard default, ordered by momentum. Parameters: `sort` = {" | ".join(SORTS)}; `category` = {" | ".join(CATEGORIES)}; `limit` = 1..{MAX_LIMIT}.
-- [Signals JSON]({base_url}/api/signals): same parameters; includes id, title, url, source, UTC ISO 8601 dates, scores, components, reasons, metrics and summary.
+- [Signals JSON]({base_url}/api/signals): same parameters; includes id, title, url, source, UTC ISO 8601 dates, scores, components, reasons, metrics, summary and `story_links` (every merged report and related coverage behind the card, with `kind` = merged | related).
 - [RSS]({base_url}/api/rss?sort=day): `sort` = {" | ".join(PERIODS)}.
 - [Full dataset]({base_url}/api/news): archived stories and score breakdowns; can be several megabytes.
 

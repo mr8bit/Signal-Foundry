@@ -264,6 +264,21 @@ class Signals(unittest.TestCase):
         self.assertEqual(items[tune['title']]['coverage'],1)
         self.assertEqual(items[base['title']]['coverage'],2)
 
+    def test_cards_list_every_merged_and_related_report(self):
+        model=post(id='m',title='deepseek-ai/DeepSeek-V4.1-Flash-1017',source_id='hf_models',source_name='Hugging Face · Models',
+                   category='model',content_kind='model',date_kind='trend',filter_mode='all',selftext='',links=[],
+                   url='https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017',article_url='https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017')
+        thread=post(id='r',source='rss',subreddit='LocalLLaMA',title='DeepSeek V4.1 Flash 1017 weights are up',source_id=None,source_name=None,
+                    permalink='/r/LocalLLaMA/comments/abc/deepseek/',selftext='',links=['https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017'],
+                    url='https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017',article_url='')
+        news=post(id='n',title='DeepSeek Just Released V4.1-Flash-1017, Scores 77.0 on DeepSWE',selftext='',links=[],
+                  article_url='https://marktechpost.com/deepseek',url='https://marktechpost.com/deepseek',source_id='marktechpost',source_name='MarkTechPost')
+        item=next(x for x in signals.build_items([model,thread,news],CFG,NOW) if x['title']==model['title'])
+        links={l['url']:l['kind'] for l in item['story_links']}
+        self.assertEqual(links['https://www.reddit.com/r/LocalLLaMA/comments/abc/deepseek/'],'merged')
+        self.assertEqual(links['https://marktechpost.com/deepseek'],'related')
+        self.assertNotIn(item['url'],links)
+
     def test_roundups_do_not_bridge_stories_and_artifacts_represent_groups(self):
         model=lambda id,repo:post(id=id,title=repo,source_id='hf_models',source_name='Hugging Face · Models',category='model',
                                   content_kind='model',date_kind='trend',filter_mode='all',feed_rank=7,url='https://huggingface.co/'+repo,
