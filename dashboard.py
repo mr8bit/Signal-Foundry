@@ -45,7 +45,7 @@ def dataset(posts,cfg,statuses,now=None):
     rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise')
     rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now)
     return dict(generated_at=now,items=items,signal_rankings=rankings,statuses=statuses,cloud_pending=pending,
-        sources=[dict(id=s['id'],name=s['name'],category=s['category']) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[
+        sources=[dict(id=s['id'],name=s['name'],category=s['category'],categories=s.get('categories',[s['category']])) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[
             dict(id='reddit:'+s,name='r/'+s,category='community') for s in cfg['subreddits']],
         oldest_at=min((p['published_at'] for p in items),default=now),
         scoring_version=SCORING_VERSION,summary_mode='extractive')

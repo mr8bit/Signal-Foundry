@@ -134,7 +134,7 @@ def md_item(position,p,order='editorial'):
     name,top=MEASURES[order]
     value=f'{p["score"]}/100' if order=='editorial' else f'{name} {measure(p,order)}/{top}, балл {p["score"]}/100'
     lines=[f'{position}. [{md_text(p["title"])}]({md_url(p.get("url"))}) — {value}']
-    when=('в трендах с ' if p.get('date_kind')=='trend' else 'опубликовано ')+iso(p['published_at'])
+    when=({'trend':'в трендах с ','updated':'обновлено '}.get(p.get('date_kind'),'опубликовано '))+iso(p['published_at'])
     if p.get('original_published_at'):when+=f'; исходная дата {iso(p["original_published_at"])}'
     lines.append(f'   - Источник: {md_text(p.get("source_name"))}; {when}')
     details=[f'тема: {md_text(p.get("topic"))}']
@@ -218,7 +218,7 @@ def e(value):
 def static_signal(p,i,order='momentum'):
     name,top=MEASURES[order];value=measure(p,order)
     return (f'<article class="signal-card"><header class="signal-head"><span class="signal-rank">{i:02d}</span>'
-            f'<span class="signal-meta"><span class="signal-source">{e(p.get("source_name"))}</span><time datetime="{iso(p["published_at"])}">{iso(p["published_at"])[:10]}</time></span></header>'
+            f'<span class="signal-meta"><span class="signal-source">{e(p.get("source_name"))}</span><time datetime="{iso(p["published_at"])}">{"обновлено " if p.get("date_kind")=="updated" else ""}{iso(p["published_at"])[:10]}</time></span></header>'
             f'<h3><a href="{e(http_url(p.get("url")))}">{e(p["title"])}</a></h3>'
             f'<p class="signal-summary">{e(p.get("summary"))}</p>'+static_also(p)+static_cloud(p)+
             f'<ul class="signal-reasons">{"".join(f"<li>{e(x)}</li>" for x in p.get("reasons",[])[:3])}</ul>'
@@ -243,7 +243,7 @@ def static_card(p,order='momentum'):
     name,top=MEASURES[order]
     meta=[e(p.get('topic'))]+[f'{e(number(m["value"]))} {e(m["label"])}' for m in p.get('metrics',[])[:2]]
     return (f'<article class="news-card"><div class="card-head"><span class="source-label"><span class="source-name">{e(p.get("source_name"))}</span></span>'
-            f'<time datetime="{iso(p["published_at"])}">{iso(p["published_at"])[:10]}</time></div>'
+            f'<time datetime="{iso(p["published_at"])}">{"обновлено " if p.get("date_kind")=="updated" else ""}{iso(p["published_at"])[:10]}</time></div>'
             f'<h3><a href="{e(http_url(p.get("url")))}">{e(p["title"])}</a></h3>'
             +(f'<p class="card-summary">{e(p["summary"])}</p>' if p.get('summary') else '')+static_also(p)+static_cloud(p)+
             f'<p class="card-meta">{" · ".join(meta)}</p><div class="card-footer"><span>{e(p.get("domain"))}</span>'

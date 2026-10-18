@@ -2,10 +2,11 @@
 from hashlib import sha256
 from html.parser import HTMLParser
 import json
+import math
 import re
 import time
 from urllib.parse import urljoin, urlsplit
-from sources import timestamp
+from sources import timestamp,Content
 
 
 def number(value):
@@ -128,7 +129,48 @@ def parse_papers(data,source,now):
     return posts
 
 
+def parse_hype(data,source,now):
+    payload=json.loads(data)
+    if not isinstance(payload,dict) or payload.get('success') is not True or not isinstance(payload.get('result'),list):
+        raise RuntimeError('Expected successful Replicate Hype posts response')
+    posts=[];seen=set()
+    for rank,row in enumerate(payload['result']):
+        if not isinstance(row,dict):continue
+        origin=row.get('source');url=row.get('url')
+        hosts={'github':'github.com','huggingface':'huggingface.co','replicate':'replicate.com','reddit':'www.reddit.com'}
+        if origin not in hosts or not isinstance(url,str):continue
+        parsed=urlsplit(url)
+        if parsed.scheme!='https' or parsed.netloc not in {hosts[origin],hosts[origin].removeprefix('www.')}:continue
+        parts=parsed.path.strip('/').split('/')
+        if origin=='reddit':
+            if len(parts)<4 or parts[0]!='r' or parts[2]!='comments':continue
+            identifier=parts[3];title=row.get('name');subreddit=parts[1]
+        else:
+            if len(parts)!=2 or not all(re.fullmatch(r'[\w.-]+',x) for x in parts):continue
+            identifier='/'.join(parts);title=identifier
+        if not isinstance(title,str) or not title.strip() or url in seen:continue
+        try:stamp=timestamp(row.get('created_at'))
+        except (ValueError,TypeError,AttributeError,OverflowError):continue
+        if not math.isfinite(stamp) or stamp>now+300:continue
+        value=row.get('stars')
+        value=value if type(value) is int and value>=0 else None
+        unit,label={'github':('stars','звёзд всего'), 'huggingface':('likes','лайков'),
+                    'replicate':('runs','запусков всего'), 'reddit':('upvotes','апвоутов')}[origin]
+        kind='repository' if origin=='github' else 'model' if origin in ('huggingface','replicate') else None
+        category='repository' if origin=='github' else 'model' if kind=='model' else 'community'
+        spec=dict(source,category=category,filter_mode='all' if kind=='model' else 'keywords')
+        description=Content(url);description.feed(row.get('description') if isinstance(row.get('description'),str) else '')
+        p=entry(spec,origin+':'+identifier,title.strip(),url,description.text(),rank,now,kind,[metric(unit,value,label)])
+        # Hype's HF date is lastModified; Replicate's is latest_version.created_at.
+        # Neither is a model creation date. Keep the real update date, never the fetch time.
+        p.update(created_utc=stamp,date_kind='updated' if kind=='model' else 'published',
+                 hype_origin=origin,aggregator_url='https://hype.replicate.dev/')
+        if origin=='reddit':p.update(subreddit=subreddit,score=value,link_flair_text=None,reddit_post_id=identifier)
+        seen.add(url);posts.append(p)
+    return posts
+
+
 def parse_trends(data,source,now=None):
     now=time.time() if now is None else now
-    parser={'github_trending':parse_github,'hf_models':parse_models,'hf_papers':parse_papers}[source['format']]
+    parser={'github_trending':parse_github,'hf_models':parse_models,'hf_papers':parse_papers,'replicate_hype':parse_hype}[source['format']]
     return parser(data,source,now)

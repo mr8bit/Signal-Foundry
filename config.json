@@ -358,6 +358,18 @@
       "filter_mode": "keywords"
     },
     {
+      "id": "replicate_hype",
+      "name": "Replicate Hype",
+      "url": "https://hype.replicate.dev/api/posts?filter=past_week&sources=github,huggingface,replicate,reddit",
+      "category": "aggregator",
+      "categories": ["repository", "model", "community"],
+      "format": "replicate_hype",
+      "enabled": true,
+      "filter_mode": "keywords",
+      "poll_seconds": 3600,
+      "cache_ttl_seconds": 1800
+    },
+    {
       "id": "hf_models",
       "name": "Hugging Face · Models",
       "url": "https://huggingface.co/api/models?sort=trendingScore&limit=30&full=true&cardData=true",

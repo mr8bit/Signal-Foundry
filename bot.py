@@ -64,6 +64,8 @@ def keys(post):
     identity = {'article:' + article_url(post['article_url'])} if post.get('source') == 'site' else {'reddit:' + post['id']}
     if post.get('source') == 'site':
         identity.add('title:' + re.sub(r'\W+', '', post['title'].casefold()))
+    if post.get('hype_origin')=='reddit' and post.get('reddit_post_id'):
+        identity.add('reddit:'+post['reddit_post_id'])
     if post.get('cloud_rule')=='vercel_sdk':return identity
     return identity | {k for u in urls if (k := canonical(u))}
 
@@ -90,7 +92,7 @@ def priority(p):
 
 
 def reject(p, cfg, now, max_age_hours=None):
-    site = p.get('source') == 'site'
+    site = p.get('source') == 'site' and p.get('hype_origin') != 'reddit'
     sub = p.get('subreddit', '')
     if not site and sub not in cfg['subreddits']:
         return 'subreddit'
@@ -107,7 +109,7 @@ def reject(p, cfg, now, max_age_hours=None):
         return None
     if p.get('stickied') or p.get('removed_by_category'):
         return 'removed/sticky'
-    if p.get('source') != 'rss' and p.get('score', 0) < cfg['subreddits'][sub]:
+    if p.get('source') != 'rss' and (p.get('score') or 0) < cfg['subreddits'][sub]:
         return 'score'
     title = p['title']
     if matches(title, cfg['exclude']):
@@ -313,11 +315,11 @@ class RedditRSS:
     def get(self, url, source=None, timeout=40):
         self.last_cache_info=None
         def parse(data,observed=None):
-            if source and source.get('format') in ('github_trending','hf_models','hf_papers'):
+            if source and source.get('format') in ('github_trending','hf_models','hf_papers','replicate_hype'):
                 return parse_trends(data,source,observed)
             return (parse_newsroom(data,source) if source.get('format')=='html' else parse_site_feed(data,source)) if source else parse_feed(data)
         ttl_key={'github_trending':'github_trending_ttl_seconds','hf_models':'hf_models_ttl_seconds',
-                 'hf_papers':'hf_papers_ttl_seconds','html':'html_ttl_seconds'}.get((source or {}).get('format'),'rss_ttl_seconds')
+                 'hf_papers':'hf_papers_ttl_seconds','replicate_hype':'html_ttl_seconds','html':'html_ttl_seconds'}.get((source or {}).get('format'),'rss_ttl_seconds')
         ttl=(source or {}).get('cache_ttl_seconds',self.http.policy[ttl_key])
         headers={'User-Agent':os.getenv('REDDIT_USER_AGENT','reddit-reposter/1.0'),
                  'Accept':'application/json, application/atom+xml, application/rss+xml, application/xml, text/html;q=0.5'}

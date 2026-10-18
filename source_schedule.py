@@ -37,7 +37,7 @@ class SourceSchedule:
         if 'poll_seconds' in source:return source['poll_seconds']
         kind=source.get('format')
         if kind=='hf_papers':return policy['papers_seconds']
-        if kind in ('hf_models','github_trending'):return policy['trend_seconds']
+        if kind in ('hf_models','github_trending','replicate_hype'):return policy['trend_seconds']
         if source.get('id')=='venturebeat' or source.get('category') in ('lab','newsletter'):return policy['slow_source_seconds']
         return policy['rss_seconds']
 

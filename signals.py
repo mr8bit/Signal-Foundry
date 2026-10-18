@@ -175,7 +175,7 @@ def popularity(p):
 def reference_time(p):
     """When the story became news: publication for models/papers, first sighting for trending repositories."""
     if p.get('date_kind')!='trend':
-        return p['created_utc'],'публикация'
+        return p['created_utc'],'обновление' if p.get('date_kind')=='updated' else 'публикация'
     if p.get('content_kind') in HALF_LIFE and p.get('original_published_at'):
         return p['original_published_at'],'статья опубликована' if p['content_kind']=='paper' else 'модель создана'
     return p.get('first_seen',p['created_utc']),'впервые в трендах'
@@ -234,6 +234,7 @@ def score(p, members, now, cfg=None, related=(), focus=None, series=None):
                coverage=('Тот же сюжет: '+', '.join(extra)) if extra else '')
     reasons=[]
     if focus=='enterprise': reasons.append(focus_reason)
+    elif p.get('date_kind')=='updated' and p.get('content_kind')=='model': reasons.append('Обновление модели')
     elif unknown_model: reasons.append('Модель в трендах')
     elif priority_<5: reasons.append(LABELS[priority_])
     if measured: reasons.append('Есть численные показатели')
@@ -402,7 +403,7 @@ def build_items(posts,cfg,now,max_hours=8760,focus=None):
         signal_categories,signal_metrics=ranking_metadata(members)
         result.append(dict(id=sha256(stable.encode()).hexdigest()[:20],title=p['title'],
             summary=summary,
-            description_kind=('Метаданные модели' if p.get('content_kind')=='model' else 'Аннотация статьи' if p.get('content_kind')=='paper' else 'Описание репозитория' if p.get('content_kind')=='repository' else 'Фрагмент статьи' if p.get('article_text') else 'Описание из RSS'),
+            description_kind=('Описание из Replicate Hype' if p.get('hype_origin') else 'Метаданные модели' if p.get('content_kind')=='model' else 'Аннотация статьи' if p.get('content_kind')=='paper' else 'Описание репозитория' if p.get('content_kind')=='repository' else 'Фрагмент статьи' if p.get('article_text') else 'Описание из RSS'),
             source_id=sid,source_name=source_name(p),category=category,column=column,
             signal_categories=signal_categories,signal_metrics=signal_metrics,
             cloud_availability=availability_for(members),
