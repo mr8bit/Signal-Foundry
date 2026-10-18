@@ -71,7 +71,19 @@ def keys(post):
     return identity | {k for u in urls if (k := canonical(u))}
 
 
+RELEASE_CUES=['release', 'released', 'releases', 'launch', 'launches', 'launched', 'introducing', 'introduces', 'unveils',
+              'announces', 'open-source', 'open-sources', 'open weights', 'open model', 'new model']
+# Tutorials explain how to use something; their bodies mention releases and benchmarks without being one.
+TUTORIAL=re.compile(r'^\s*(?:how to\b|tutorial\b|guide\b|a (?:coding|step[- ]by[- ]step|hands[- ]on|practical|complete|beginner\W?s?|full)\b|'
+                    r'step[- ]by[- ]step\b|building an?\b|build an?\b|implementing\b|getting started\b)',re.I)
+
+
 def priority(p):
+    level=classify(p)
+    return max(level,3) if not p.get('content_kind') and TUTORIAL.search(p['title']) else level
+
+
+def classify(p):
     cloud=cloud_decision(p)
     if cloud and cloud.mode=='standalone':return {'model':1,'hardware':2,'agent_platform':3,'pricing':3}.get(cloud.kind,5)
     if p.get('content_kind') in ('repository','model','paper'):
@@ -81,7 +93,9 @@ def priority(p):
     repo = any(x.startswith('github.com/') for x in refs)
     weights = any(x.startswith('huggingface.co/') for x in refs) or matches(text, ['weights', 'GGUF'])
     numbers = bool(re.search(r'\d[\d.,]*\s*(?:tok/s|tokens/s|GB|GB/s|t/s)', text, re.I))
-    if weights and matches(text, ['release', 'released', 'open-source', 'open weights', 'new model']) and (numbers or matches(text, ['benchmark'])):
+    # An article body mentions releases in passing; for publications the headline must announce one.
+    announcement = p['title'] if p.get('source') == 'site' else text
+    if weights and matches(announcement, RELEASE_CUES) and (numbers or matches(text, ['benchmark'])):
         return 1
     if numbers and matches(text, ['VRAM', 'tok/s', 'tokens/s', 'GPU', 'local', 'ran', 'running']):
         return 2

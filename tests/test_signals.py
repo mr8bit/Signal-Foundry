@@ -220,6 +220,17 @@ class Signals(unittest.TestCase):
             self.assertEqual(parts(dict(known,title=title))['relevance'],18,title)
         self.assertEqual(parts(dict(known,title='nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-NVFP4'))['relevance'],30)
 
+    def test_tutorials_and_passing_mentions_are_not_releases(self):
+        body='We use open-source weights from https://huggingface.co/nvidia/sdm, released last week. Benchmark: 40 tok/s.'
+        tutorial=post(title='How to Make Zero-Training Tabular Predictions with NVIDIA Structured Data Models',selftext=body,
+                      links=['https://huggingface.co/nvidia/sdm'],source_id='marktechpost')
+        self.assertEqual(signals.priority(tutorial,CFG),3)
+        self.assertEqual(signals.priority(dict(tutorial,title='A Coding Guide to Qwen3.8 released with open weights'),CFG),3)
+        # A headline announcing the release still counts; a body mentioning one does not.
+        self.assertEqual(signals.priority(dict(tutorial,title='NVIDIA released open weights for Structured Data Models'),CFG),1)
+        self.assertEqual(signals.priority(dict(tutorial,title='Liquid AI Releases d1-ultra: A Multimodal Decision Model'),CFG),1)
+        self.assertGreater(signals.priority(dict(tutorial,title='Structured data models are changing tabular ML'),CFG),1)
+
     def test_model_name_and_self_link_are_not_evidence(self):
         model=post(content_kind='model',category='model',title='someone/Agens-32B-Preview',selftext='Parameters: 32,000,000',
                    url='https://huggingface.co/someone/Agens-32B-Preview',links=[],article_url='https://huggingface.co/someone/Agens-32B-Preview')

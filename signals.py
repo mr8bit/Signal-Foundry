@@ -229,7 +229,7 @@ def priority(p,cfg=None):
     """bot.priority plus named model releases, which news and lab titles announce without links or numbers."""
     base=bot.priority(p)
     models=(cfg or {}).get('models',[])
-    if base>1 and not p.get('content_kind') and bot.matches(p['title'],models) and bot.matches(p['title'],RELEASE):
+    if base>1 and not p.get('content_kind') and not bot.TUTORIAL.search(p['title']) and bot.matches(p['title'],models) and bot.matches(p['title'],RELEASE):
         return 1
     return base
 
