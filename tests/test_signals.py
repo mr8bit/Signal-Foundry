@@ -381,6 +381,30 @@ class Signals(unittest.TestCase):
         self.assertEqual([d['id'] for d in card['discussions']],[reddit['id']])
         self.assertNotIn('discussion_of',card)
 
+    def test_one_version_with_other_product_words_is_another_products_coverage(self):
+        model=lambda id,title:post(id=id,title=title,source_id='hf_models',source_name='Hugging Face · Models',category='model',
+                                   content_kind='model',date_kind='trend',filter_mode='all',url=f'https://huggingface.co/{title}',
+                                   article_url=f'https://huggingface.co/{title}',selftext='',links=[],created_utc=NOW-3600)
+        parse,bolt,vl=model('p','nvidia/Nemotron-3.5-Parse'),model('b','nvidia/NVIDIA-Nemotron-3.5-Bolt-74B'),model('v','nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B')
+        news=post(id='n',title='NVIDIA Releases Nemotron 3.5 Super VL, a 120B open model',filter_mode='all',links=[],
+                  article_url='https://mtp.example/vl',url='https://mtp.example/vl',selftext='',created_utc=NOW-7200)
+        thread=post(id='t',source='rss',subreddit='LocalLLaMA',title='Nemotron 3.5 Bolt - Horse',source_id=None,source_name=None,
+                    category='community',permalink='/r/LocalLLaMA/comments/t/',url='https://www.reddit.com/r/LocalLLaMA/comments/t/',
+                    article_url='',selftext='',links=[],created_utc=NOW-1800)
+        products=signals.product_words([parse,bolt,vl])
+        self.assertTrue({'parse','bolt','super','vl'}<=products)
+        self.assertTrue(signals.variants(parse,news,products))
+        # A thread using the model in its own words still covers it; "horse" names no product.
+        self.assertFalse(signals.variants(bolt,thread,products))
+        items={x['title']:x for x in signals.build_items([parse,bolt,vl,news,thread],CFG,NOW)}
+        self.assertEqual(items[parse['title']]['related_sources'],[])
+
+    def test_category_rankings_share_the_story_attention(self):
+        row=lambda points,score:dict(id='x',score=score,published_at=NOW,components=[dict(id='attention',points=points,momentum=points),
+                                                                                     dict(id='freshness',points=10)])
+        [shared]=signals.share_attention([row(4.3,40)],[row(25,60.7)])
+        self.assertEqual((shared['score'],shared['components'][0]['momentum']),(60.7,25))
+
     def test_shared_keys_merge_articles_only_within_days(self):
         issue=lambda id,days:post(id=id,title='[AINews] not much happened today',source_id='latent',source_name='Latent Space',
                                   category='newsletter',filter_mode='all',article_url=f'https://latent.example/{id}',url=f'https://latent.example/{id}',

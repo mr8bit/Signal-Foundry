@@ -16,7 +16,7 @@ import bot
 from cloud_news import prepare_cloud_posts
 import attention
 import embeddings
-from signals import build_items, popularity_baseline, channel_baseline, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
+from signals import build_items, popularity_baseline, channel_baseline, share_attention, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
 
 LOG=logging.getLogger('dashboard')
 PERIODS={'now':48,'day':24,'week':168,'month':720,'year':8760}
@@ -55,6 +55,7 @@ def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):
               for category in ('models','repos','papers','media')}
     rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',**common)
     rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,**common)
+    rankings={category:share_attention(rows,items) for category,rows in rankings.items()}
     return dict(generated_at=now,items=items,signal_rankings=rankings,statuses=statuses,cloud_pending=pending,
         sources=[dict(id=s['id'],name=s['name'],category=s['category'],categories=s.get('categories',[s['category']])) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[
             dict(id='reddit:'+s,name='r/'+s,category='community') for s in cfg['subreddits']],

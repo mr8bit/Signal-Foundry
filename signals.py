@@ -529,6 +529,7 @@ def related_stories(stories,retelling=None):
     timeline=sorted((reference_time(p)[0],j) for j,(p,_) in enumerate(stories) if not p.get('content_kind'))
     times=[t for t,_ in timeline]
     prints=[fingerprint(p) for p,_ in stories]
+    products=product_words([p for p,_ in stories if p.get('content_kind') in ('model','repository')])
     index=defaultdict(set)
     for i,(versions,stems) in enumerate(prints):
         for token in versions|stems: index[token].add(i)
@@ -546,7 +547,7 @@ def related_stories(stories,retelling=None):
                     and retelling.same_story(p,stories[j][0],merge=False)}
         for j in (candidates|retold)-{i}:
             q,others=stories[j]
-            if j in retold or abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q):
+            if j in retold or abs(reference_time(p)[0]-reference_time(q)[0])<=STORY_WINDOW and same_story(prints[i],prints[j]) and same_owner(p,q) and not variants(p,q,products):
                 found+=[m for m in others if publisher(m) not in own];linked.append(j)
         result.append((found,linked))
     return result
@@ -597,6 +598,40 @@ def similar_articles(a,b):
         # Each side naming the version with a word the other title lacks means different products.
         return not any({x for x in qualifiers(wa,v) if x not in wb} and {x for x in qualifiers(wb,v) if x not in wa} for v in anchors)
     return len(shared)>=4 and jaccard>=0.4
+
+
+def name_words(p):
+    """Title words without a model's or repository's owner namespace ("unsloth/DeepSeek-V4.1" -> deepseek, v4.1)."""
+    return title_words(dict(p,title=re.sub(r'^[\w.-]+/','',p['title'].strip())))
+
+
+def product_words(artifacts):
+    """Words that name products in this build: the names of its models and repositories (parse, bolt, super, vl)."""
+    return {w for p in artifacts for w in name_words(p) if not re.search(r'\d',w) and len(w)>1 and w not in GENERIC}
+
+
+def variants(p,q,products):
+    """Two stories naming one version with different product words are different products: "Nemotron-3.5-Parse" is not
+    covered by "Nemotron 3.5 Super VL" news (the rule of similar_articles). Only product words count, so a thread
+    using a model in its own words ("Deepseek v4.1 1017 - Horse") still covers it."""
+    wa,wb=name_words(p),name_words(q)
+    anchors={w for w in wa if is_version(w)}&{w for w in wb if is_version(w)}
+    other=lambda x,y,v:{w for w in qualifiers(x,v) if w not in y and w in products}
+    return any(other(wa,wb,v) and other(wb,wa,v) for v in anchors)
+
+
+def share_attention(rows,overall):
+    """A category ranking is built from that category's posts only, so the coverage of its stories by other kinds of
+    sources (a model's news and threads) is missing there. Attention measures the story, not the tab: a row that is also
+    an overall story takes the overall attention and momentum, and its score changes by the difference."""
+    stories={x['id']:x for x in overall}
+    for x in rows:
+        if x['id'] not in stories:continue
+        mine=next(c for c in x['components'] if c['id']=='attention')
+        theirs=next(c for c in stories[x['id']]['components'] if c['id']=='attention')
+        x['score']=round(x['score']-mine['points']+theirs['points'],1)
+        x['components']=[theirs if c['id']=='attention' else c for c in x['components']]
+    return sorted(rows,key=lambda x:(-x['score'],-x['published_at']))
 
 
 def merge_similar(stories,index=None):
