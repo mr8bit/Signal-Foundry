@@ -6,10 +6,10 @@
   // Period tabs (mirrored in digest.py). Every tab selects by when a story became news (news_at: publication,
   // model/paper creation, a repository's first day in GitHub Trending), never by the last read of a trend list,
   // so an August model trending again today is not "today's" news. Each tab sorts and headlines one measure:
-  //   trending  12 h   momentum     = attention: platform, discussion and reach signals (max 25): what is discussed now
+  //   trending  24 h   momentum     = attention: platform, discussion and reach signals (max 25), halving over a day: what is discussed now
   //   day       24 h   editorial    = full editorial score with freshness (max 100): the day's main news
   //   week/month/year  significance = editorial score without freshness (max 75): what mattered in the period
-  const PERIODS={trending:{hours:12,order:'momentum'},day:{hours:24,order:'editorial'},
+  const PERIODS={trending:{hours:24,order:'momentum'},day:{hours:24,order:'editorial'},
                  week:{hours:168,order:'significance'},month:{hours:720,order:'significance'},year:{hours:8760,order:'significance'}};
   const MEASURES={momentum:{name:'Momentum',max:25},editorial:{name:'Score',max:100},significance:{name:'Significance',max:75}};
   function belongs(item,category){return category==='all'||(item.signal_categories||[item.column]).includes(category)}
@@ -28,18 +28,35 @@
   function measure(item,order){return order==='momentum'?momentum(item):order==='significance'?significance(item):item.score}
   function newsTime(item){return item.news_at??item.published_at}
   function inPeriod(item,period,now){const age=now-newsTime(item);return age>=0&&age<=(PERIODS[period]||PERIODS.day).hours*3600}
-  function trending(item,now){return inPeriod(item,'trending',now)}
+  // A model is news when it was created, but Hugging Face lists models trending for days: Trending Now also shows a
+  // model on the trend list now (seen within the window) that was created within TREND_MODEL_DAYS (mirrored in digest.py).
+  const TREND_MODEL_DAYS=7;
+  function trending(item,now){
+    if(inPeriod(item,'trending',now))return true;
+    const seen=now-item.published_at,created=now-newsTime(item);
+    return item.column==='models'&&item.date_kind==='trend'&&seen>=0&&seen<=PERIODS.trending.hours*3600&&created>=0&&created<=TREND_MODEL_DAYS*86400;
+  }
+  // Trending Now momentum fades with age, halving over TREND_HALF_LIFE hours, so yesterday's strong story gives way
+  // gradually instead of dropping out at a cutoff. A model on the trend list counts at most half a day old: it is
+  // trending now, but it was created earlier.
+  const TREND_HALF_LIFE=24;
+  const fade=(value,age)=>value*Math.pow(2,-Math.max(0,age)/(TREND_HALF_LIFE*3600));
+  function trendAge(item,now){
+    const age=now-newsTime(item);
+    return item.column==='models'&&item.date_kind==='trend'?Math.min(age,TREND_HALF_LIFE*3600/2):age;
+  }
   // Stories of a period (mirrored in digest.py). Trending Now folds community threads into the card they discuss
-  // (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh, at the highest
-  // momentum of itself and those threads, which it lists as `threads`.
+  // (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh and lists them as
+  // `threads`; its trend_momentum is the highest faded momentum of itself and those threads.
   function select(rows,period,now){
     if(period!=='trending')return rows.filter(item=>inPeriod(item,period,now));
     const ids=new Set(rows.map(item=>item.id));
     return rows.flatMap(item=>{
       if(item.discussion_of&&ids.has(item.discussion_of))return [];
       const threads=(item.discussions||[]).filter(d=>trending(d,now));
-      if(!threads.length)return trending(item,now)?[item]:[];
-      return [{...item,threads,trend_momentum:Math.max(momentum(item),...threads.map(d=>round(d.momentum)))}];
+      if(!threads.length&&!trending(item,now))return [];
+      const value=Math.max(fade(momentum(item),trendAge(item,now)),...threads.map(d=>fade(d.momentum,now-d.news_at)));
+      return [{...item,...(threads.length?{threads}:{}),trend_momentum:round(value)}];
     });
   }
   function headline(item,period){const order=(PERIODS[period]||PERIODS.day).order;return {...MEASURES[order],order,value:measure(item,order)}}

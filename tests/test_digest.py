@@ -57,12 +57,12 @@ class Digest(unittest.TestCase):
               item('big-last-week',60,published_at=now-5*D,news_at=now-5*D,components=parts(10,15,0.4)),
               item('small-yesterday',50,published_at=now-20*H,news_at=now-20*H,components=parts(0,0,14))]
         ids=lambda period:[p['id'] for p in digest.ranked(data(rows),'all',period,now)]
-        self.assertEqual(ids('trending'),['hot','quiet-new'])
+        self.assertEqual(ids('trending'),['hot','afternoon','quiet-new','small-yesterday'])
         self.assertEqual(ids('day'),['quiet-new','afternoon','small-yesterday','hot'])
         self.assertEqual(ids('week'),['big-last-week','afternoon','quiet-new','small-yesterday','hot'])
         self.assertNotIn('august-model',ids('month'));self.assertIn('august-model',ids('year'))
         text=digest.markdown(data(rows),'trending',now=now)
-        self.assertIn('— momentum 21/25, score 40/100',text)
+        self.assertIn('— momentum 19.3/25, score 40/100',text)  # 21 three hours ago, halving over a day
         self.assertIn('— significance 59.6/75, score 60/100',digest.markdown(data(rows),'week',now=now))
         value=json.loads(digest.signals_json(data(rows),'week',now=now))
         self.assertEqual((value['order'],value['period_hours'],value['items'][0]['significance']),('significance',168,59.6))
@@ -73,16 +73,25 @@ class Digest(unittest.TestCase):
         row=lambda id,hours,value,**extra:item(id,50,**dict(published_at=now-hours*H,news_at=now-hours*H,source_id=id,
             components=[dict(id='attention',points=value,max=25,momentum=value)])|extra)
         thread=lambda id,hours,value:row(id,hours,value,column='community',platform='reddit',discussion_of='release')
-        threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',20,24)]
+        threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',30,24)]
         rows=[row('release',30,4,discussions=[dict(id=t['id'],title=t['id'],source='r/x',url='https://x',news_at=t['news_at'],
                                                    momentum=t['components'][0]['momentum']) for t in threads]),*threads,
               *[row(f'r{i+1}',1,v,column='community',platform='reddit',source_id=f'reddit:sub{i}') for i,v in enumerate([19,18,17,16])],
               row('other',1,15)]
         order=digest.ranked(data(rows),'all','trending',now)
         self.assertEqual([p['id'] for p in order],['release','r1','r2','r3','other','r4'])
-        self.assertEqual(digest.momentum(order[0]),25);self.assertEqual([t['id'] for t in order[0]['threads']],['t1','t2'])
-        self.assertEqual([p['id'] for p in digest.ranked(data(rows),'all','day',now) if p['id'].startswith('t')],['t1','t2','t-old'])
+        self.assertEqual(digest.momentum(order[0]),23.6);self.assertEqual([t['id'] for t in order[0]['threads']],['t1','t2'])
+        self.assertEqual([p['id'] for p in digest.ranked(data(rows),'all','day',now) if p['id'].startswith('t')],['t1','t2'])
         self.assertIn('Discussed now in: [r/x: t1]',digest.markdown(data(rows),'trending',now=now))
+
+    def test_trending_shows_models_on_the_trend_list_created_within_a_week(self):
+        # Same fixture as tests/signal-ranking.test.cjs.
+        H,D=3600,86400;now=100*D
+        model=lambda id,seen,created,**extra:item(id,50,**dict(column='models',date_kind='trend',published_at=now-seen*H,news_at=now-created*D)|extra)
+        rows=[model('new-trending',1,3),model('old-trending',1,10),model('left-the-list',30,3),model('article',1,3,column='media',date_kind='published')]
+        self.assertEqual([p['id'] for p in digest.select(rows,'trending',now)],['new-trending'])
+        self.assertEqual(digest.select(rows,'day',now),[])
+        self.assertEqual(digest.select([model('m',1,3,components=[dict(id='attention',points=20,max=25,momentum=20)])],'trending',now)[0]['trend_momentum'],14.1)
 
     def test_query_validation(self):
         self.assertEqual(digest.query({}),('now','all',20))

@@ -52,7 +52,7 @@ const FIXTURE=[
   {id:'small-yesterday',score:50,published_at:NOW-20*H,news_at:NOW-20*H,components:parts(0,0,14)}];
 const ids=(period,order)=>ranking.rank(FIXTURE.filter(x=>ranking.inPeriod(x,period,NOW)),'all',order??ranking.PERIODS[period].order).map(x=>x.id);
 test('tabs select by when a story became news and sort by their own measure',()=>{
-  assert.deepEqual(ids('trending'),['hot','quiet-new']);
+  assert.deepEqual(ids('trending'),['hot','afternoon','quiet-new','small-yesterday']);
   assert.deepEqual(ids('day'),['quiet-new','afternoon','small-yesterday','hot']);
   assert.deepEqual(ids('week'),['big-last-week','afternoon','quiet-new','small-yesterday','hot']);
   assert.ok(ranking.inPeriod(FIXTURE[3],'year',NOW)&&!ranking.inPeriod(FIXTURE[3],'month',NOW));
@@ -77,13 +77,25 @@ test('Trending Now folds community threads into their story and limits Reddit as
   const row=(id,hours,value,extra={})=>({id,score:50,published_at:NOW-hours*H,news_at:NOW-hours*H,source_id:id,
     components:[{id:'attention',points:value,momentum:value}],...extra});
   const thread=(id,hours,value)=>row(id,hours,value,{column:'community',platform:'reddit',discussion_of:'release'});
-  const threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',20,24)];
+  const threads=[thread('t1',2,25),thread('t2',3,20),thread('t-old',30,24)];
   const rows=[row('release',30,4,{discussions:threads.map(t=>({id:t.id,title:t.id,source:'r/x',url:'https://x',
       news_at:t.news_at,momentum:t.components[0].momentum}))}),...threads,
     ...[19,18,17,16].map((v,i)=>row('r'+(i+1),1,v,{column:'community',platform:'reddit',source_id:'reddit:sub'+i})),row('other',1,15)];
   const order=ranking.rank(ranking.select(rows,'trending',NOW),'all','momentum');
   assert.deepEqual(order.map(x=>x.id),['release','r1','r2','r3','other','r4']);
-  assert.equal(ranking.momentum(order[0]),25);
+  assert.equal(ranking.momentum(order[0]),23.6); // 25 two hours ago, halving over a day
   assert.deepEqual(order[0].threads.map(t=>t.id),['t1','t2']);
-  assert.deepEqual(ranking.select(rows,'day',NOW).map(x=>x.id).filter(id=>id.startsWith('t')),['t1','t2','t-old']);
+  assert.deepEqual(ranking.select(rows,'day',NOW).map(x=>x.id).filter(id=>id.startsWith('t')),['t1','t2']);
+});
+// Shared fixture with tests/test_digest.py: a model trending now counts while it is less than a week old.
+test('Trending Now shows models on the trend list now when created within a week',()=>{
+  const model=(id,seenHours,createdDays,extra={})=>({id,score:50,column:'models',date_kind:'trend',published_at:NOW-seenHours*H,
+    news_at:NOW-createdDays*D,components:[{id:'attention',points:10,momentum:10}],...extra});
+  const rows=[model('new-trending',1,3),model('old-trending',1,10),model('left-the-list',30,3),model('article',1,3,{column:'media',date_kind:'published'})];
+  assert.deepEqual(ranking.select(rows,'trending',NOW).map(x=>x.id),['new-trending']);
+  assert.deepEqual(ranking.select(rows,'day',NOW).map(x=>x.id),[]);
+});
+test('a trending model fades as if half a day old',()=>{
+  const m={id:'m',score:50,column:'models',date_kind:'trend',published_at:NOW-H,news_at:NOW-3*D,components:[{id:'attention',points:20,momentum:20}]};
+  assert.equal(ranking.select([m],'trending',NOW)[0].trend_momentum,14.1);
 });

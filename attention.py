@@ -31,7 +31,7 @@ GROWTH={'github_stars':'github_stars_day','hf_likes':'hf_likes_day','replicate_r
 DEFAULTS=dict(enabled=True,budget_seconds=150,lookup_hours=72,
               ttl_seconds=dict(hn=7200,hf=10800,github=21600,substack=10800,gnews=10800,most_read=3600),
               # A story found minutes after publication has no other outlets or HN thread yet; while it can still
-              # trend (Trending Now covers 12 hours) its coverage and discussion are checked again sooner.
+              # gain most of its Trending Now momentum, its coverage and discussion are checked again sooner.
               fresh_hours=12,fresh_ttl_seconds=dict(hn=1800,gnews=2700),
               limits=dict(hn=150,hf=60,github=60,github_without_token=15,substack=20,gnews=15),
               gnews_categories=['news','lab','newsletter'],substack_sources=[],most_read={})

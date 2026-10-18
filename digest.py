@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import html
 import json
+import math
 import re
 import time
 from urllib.parse import quote, urlencode, urlsplit
@@ -13,14 +14,14 @@ from dashboard import PERIODS
 
 CATEGORIES={'all':'Overall','models':'Models','repos':'GitHub','papers':'Research papers',
             'media':'Publications','enterprise':'Enterprise','cloud':'Cloud'}
-PERIOD_LABELS={'trending':'12 hours','day':'24 hours','week':'7 days','month':'30 days','year':'365 days','now':'48 hours'}
+PERIOD_LABELS={'trending':'24 hours','day':'24 hours','week':'7 days','month':'30 days','year':'365 days','now':'48 hours'}
 SORTS=['trending','day','week','month','year','now']
 # Period tabs, mirrored from web/signal-ranking.js: the window counts from when a story became news (news_at),
 # and each tab sorts by one measure. 'now' (48 h, editorial) remains only for existing API clients.
-WINDOWS={'trending':(12,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
+WINDOWS={'trending':(24,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
          'year':(8760,'significance'),'now':(48,'editorial')}
 MEASURES={'momentum':('momentum',25),'editorial':('score',100),'significance':('significance',75)}
-PERIOD_NOTES={'trending':'Trending Now: stories from the last 12 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25. A story with no attention signal uses its editorial weight percentile, at most 10. Community threads about a story with its own card fold into that card.',
+PERIOD_NOTES={'trending':'Trending Now: stories from the last 24 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25, halving over a day of age. A story with no attention signal uses its editorial weight percentile, at most 10. Community threads about a story with its own card fold into that card.',
               'day':'The leading stories of the last 24 hours by editorial score, including freshness, up to 100.',
               'week':'The most significant stories of the last seven days. Significance excludes freshness, up to 75.',
               'month':'The most significant stories of the last 30 days, excluding freshness, up to 75.',
@@ -58,18 +59,35 @@ def ranked(data,category='all',period=DEFAULT_PERIOD,now=None):
     return diversify(rows,order)
 
 
+# Trending Now momentum fades with age, halving over TREND_HALF_LIFE hours, so yesterday's strong story gives way
+# gradually instead of dropping out at a cutoff. A model on the trend list counts at most half a day old: it is
+# trending now, but it was created earlier.
+TREND_HALF_LIFE=24
+
+
+def fade(value,age):
+    return value*2**(-max(0,age)/(TREND_HALF_LIFE*3600))
+
+
+def trend_age(p,now):
+    age=now-news_time(p)
+    return min(age,TREND_HALF_LIFE*3600/2) if p.get('column')=='models' and p.get('date_kind')=='trend' else age
+
+
 def select(rows,period,now):
     """Stories of a period, mirrored from web/signal-ranking.js. Trending Now folds community threads into the card
-    they discuss (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh, at the
-    highest momentum of itself and those threads, which it lists as `threads`."""
+    they discuss (discussion_of, signals.fold_discussions): the card stays while any of its threads is fresh and lists
+    them as `threads`; its trend_momentum is the highest faded momentum of itself and those threads."""
     hours=WINDOWS[period][0]
     if period!='trending':return [p for p in rows if 0<=now-news_time(p)<=hours*3600]
     ids={p['id'] for p in rows};result=[]
     for p in rows:
         if p.get('discussion_of') in ids:continue
         threads=[d for d in p.get('discussions',[]) if trending(d,now)]
-        if threads:result.append(p|dict(threads=threads,trend_momentum=max([momentum(p)]+[round(d['momentum'],1) for d in threads])))
-        elif trending(p,now):result.append(p)
+        if not threads and not trending(p,now):continue
+        value=max([fade(momentum(p),trend_age(p,now))]+[fade(d['momentum'],now-d['news_at']) for d in threads])
+        # Rounded like Math.round in web/signal-ranking.js, not to even.
+        result.append(p|(dict(threads=threads) if threads else {})|dict(trend_momentum=math.floor(value*10+0.5)/10))
     return result
 
 
@@ -126,8 +144,17 @@ def measure(p,order):
     return momentum(p) if order=='momentum' else significance(p) if order=='significance' else p['score']
 
 
+# A model is news when it was created, but Hugging Face lists models trending for days: Trending Now also shows a
+# model on the trend list now (seen within the window) that was created within TREND_MODEL_DAYS. Mirrored in
+# web/signal-ranking.js.
+TREND_MODEL_DAYS=7
+
+
 def trending(p,now):
-    return 0<=now-news_time(p)<=WINDOWS['trending'][0]*3600
+    hours=WINDOWS['trending'][0]
+    if 0<=now-news_time(p)<=hours*3600:return True
+    return (p.get('column')=='models' and p.get('date_kind')=='trend' and 0<=now-p['published_at']<=hours*3600
+            and 0<=now-news_time(p)<=TREND_MODEL_DAYS*86400)
 
 
 def iso(stamp):
@@ -255,7 +282,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 - Relevance: 30; freshness: 25; evidence: 15; primary source: 5; attention: 25.
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
-- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`) orders by momentum: attention, or for a story with no signal its editorial weight percentile (at most 10). Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 12 hours, at the highest momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
+- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`, 24 hours) orders by momentum halved per day of age (momentum × 2^(−age/24 h)), and admits models on the Hugging Face trend list created within seven days: momentum is attention, or for a story with no signal its editorial weight percentile (at most 10). Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 24 hours, at the highest faded momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date. Hype model dates represent updates, not original model creation.
 '''

@@ -107,7 +107,7 @@ Categories include Overall, Models, GitHub, Research papers, Publications, Cloud
 
 | Period | Window | Ordering and headline measure |
 |---|---|---|
-| Trending Now (default) | 12 hours | Momentum, up to 25: the story's attention (editorial-weight proxy, at most 10, when it has no attention signal) |
+| Trending Now (default) | 24 hours | Momentum, up to 25: the story's attention (editorial-weight proxy, at most 10, when it has no attention signal), halving over a day of age |
 | Day | 24 hours | Editorial score, up to 100, including freshness |
 | Week / Month / Year | 7 / 30 / 365 days | Significance, up to 75: editorial score without freshness |
 
@@ -145,7 +145,9 @@ The collector records readings after each collection and spends a time budget (`
 
 Trending Now momentum is the story's attention. A story with no attention signal at all is ranked by the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among recent publications, at most 10; this proxy never enters the editorial score.
 
-Community threads about a story that has its own card (related coverage of a lab post, news report, model or repository) are its discussion rather than separate news: "DeepSeek V4.1 Flash 1017 - GTA6 trailer" belongs to the release. In Trending Now such threads are hidden and the story's card is shown while any of them is from the last 12 hours, even when the card itself is older, at the highest momentum of the card and those threads; the card lists them under **Discussed in** (`threads` in the API). The card is the official post, then a news report, then the model or repository, then a newsletter. Other periods list threads as they are.
+Trending Now ranks by faded momentum: momentum × 2^(−age / 24 h), where age counts from when the story became news. A strong story from last night therefore gives way gradually to today's instead of vanishing at a cutoff. A model counts from its creation, so a model trending on Hugging Face is shown while it is on the trend list (seen within the window) and less than seven days old, faded as if it were half a day old; older models trending again are not news.
+
+Community threads about a story that has its own card (related coverage of a lab post, news report, model or repository) are its discussion rather than separate news: "DeepSeek V4.1 Flash 1017 - GTA6 trailer" belongs to the release. In Trending Now such threads are hidden and the story's card is shown while any of them is from the last 24 hours, even when the card itself is older, at the highest faded momentum of the card and those threads; the card lists them under **Discussed in** (`threads` in the API). The card is the official post, then a news report, then the model or repository, then a newsletter. Other periods list threads as they are.
 
 A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Hype copies do not create independent coverage of an original platform. Coverage does not verify claims or imply independent fact-checking.
 
