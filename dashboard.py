@@ -19,6 +19,18 @@ import embeddings
 from signals import build_items, popularity_baseline, channel_baseline, share_attention, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
 
 LOG=logging.getLogger('dashboard')
+TELEMETRY='data/telemetry.json'
+
+
+def record_telemetry(section,values):
+    """Outcome of the last attention, embeddings and build run for the host's monitoring collector, which reads
+    files and databases but not logs. Only the collector process writes it."""
+    try:current=json.loads(Path(TELEMETRY).read_text())
+    except (OSError,ValueError):current={}
+    current[section]=dict(values,at=time.time())
+    write_atomic(TELEMETRY,json.dumps(current,ensure_ascii=False))
+
+
 PERIODS={'now':48,'day':24,'week':168,'month':720,'year':8760}
 
 
@@ -135,12 +147,17 @@ def build(snapshot='data/feed-snapshot.json',limit=None):
     # Keep previously enriched article text; refresh is a separate explicit collection step.
     posts=archive_posts(posts)
     # Only stories the filters keep are compared; general feeds bring many more (CNews: 28 of 200 are about AI).
-    now=time.time()
-    try:embeddings.Store().refresh([p for p in posts if not bot.reject(p,cfg,now,max_age_hours=8760)])
-    except Exception:LOG.exception('embeddings_refresh_failed')
+    now=time.time();started=time.monotonic();store=embeddings.Store()
+    try:store.refresh([p for p in posts if not bot.reject(p,cfg,now,max_age_hours=8760)])
+    except Exception as exc:
+        LOG.exception('embeddings_refresh_failed');store.last=dict(error=exc.__class__.__name__)
+    if store.last:record_telemetry('embeddings',dict(store.last,duration_seconds=time.monotonic()-started))
     status_path=Path('data/feed-status.json')
     statuses=json.loads(status_path.read_text()) if status_path.exists() else []
+    ranked=time.monotonic()
     data=dataset(posts,cfg,statuses)
+    record_telemetry('build',dict(duration_seconds=time.monotonic()-started,ranking_seconds=time.monotonic()-ranked,
+                                  archived=len(posts),items=len(data['items'])))
     data['collected_at']=Path(snapshot).stat().st_mtime
     if limit is not None: data['items']=data['items'][:limit]
     write_dashboard(data)

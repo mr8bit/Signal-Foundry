@@ -30,6 +30,7 @@ class Store(unittest.TestCase):
         model=story('m','owner/model',content_kind='model')
         self.assertEqual(self.store.refresh([old,new,model],CONFIG,self.embed),2)
         self.assertEqual(self.calls,[['New story','Old story']])
+        self.assertEqual(self.store.last,dict(model='embedder-a',stories=2,added=2,pending=0,error=''))
         vectors=self.store.load(CONFIG)
         self.assertEqual(len(vectors),2);self.assertEqual(len(next(iter(vectors.values()))[0]),embeddings.DIMS)
         self.assertEqual(self.store.refresh([new],CONFIG,self.embed),0);self.assertEqual(len(self.calls),1)
@@ -44,6 +45,7 @@ class Store(unittest.TestCase):
             self.assertEqual(self.store.refresh(posts,CONFIG,self.embed),3)
         def broken(texts,config):raise OSError('down')
         self.assertEqual(self.store.refresh(posts,CONFIG,broken),0)
+        self.assertEqual((self.store.last['error'],self.store.last['pending']),('OSError',2))
         self.assertEqual(self.store.refresh(posts,CONFIG,self.embed),2);self.assertEqual(len(self.store.load(CONFIG)),5)
 
     def test_without_settings_nothing_is_called_or_loaded(self):

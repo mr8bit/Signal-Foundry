@@ -44,8 +44,11 @@ class Collector:
                 stamp=result['collected_at']
                 if stamp:os.utime('data/feed-snapshot.json',(stamp,stamp))
                 dashboard.write_atomic('data/feed-status.json',json.dumps(result['statuses'],ensure_ascii=False))
-                try:attention.refresh(result['posts'],cfg,stop=self.stop)
-                except Exception:LOG.exception('attention_refresh_failed job=%s',job['id'])
+                started=time.monotonic()
+                try:lookups=attention.refresh(result['posts'],cfg,stop=self.stop)
+                except Exception as exc:
+                    LOG.exception('attention_refresh_failed job=%s',job['id']);lookups=dict(error=exc.__class__.__name__)
+                dashboard.record_telemetry('attention',dict(lookups,duration_seconds=time.monotonic()-started))
                 data=self.publish_snapshot()
             else:
                 data=self.publications.load()['data']

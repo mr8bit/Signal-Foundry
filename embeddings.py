@@ -68,6 +68,8 @@ def request(texts,config):
 class Store:
     def __init__(self,path=None):
         self.path=Path(path or os.getenv('SIGNAL_EMBEDDINGS_DB','data/embeddings.sqlite3'))
+        # Outcome of the last refresh for monitoring: vectors added, still missing, the failure class if any.
+        self.last={}
 
     def connect(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)
@@ -88,18 +90,20 @@ class Store:
             stored={row[0] for row in db.execute('SELECT digest FROM vectors')}
             db.executemany('DELETE FROM vectors WHERE digest=?',((d,) for d in stored-wanted.keys()))
         missing=[d for d in wanted if d not in stored]
-        added=0
+        added=0;error=''
         limit=min(len(missing),PER_REFRESH)
         for start in range(0,limit,BATCH):
             batch=missing[start:min(start+BATCH,limit)]
             try:vectors=embed([wanted[d] for d in batch],config)
             except Exception as exc:
-                LOG.warning('embeddings_failed added=%s error=%s',added,exc.__class__.__name__);break
+                error=exc.__class__.__name__
+                LOG.warning('embeddings_failed added=%s error=%s',added,error);break
             with self.connect() as db:
                 db.executemany('INSERT OR REPLACE INTO vectors VALUES (?,?,?)',
                                ((d,config[2],quantize(v).tobytes()) for d,v in zip(batch,vectors)))
             added+=len(batch)
         if added:LOG.info('embeddings_added count=%s pending=%s',added,len(missing)-added)
+        self.last=dict(model=config[2],stories=len(wanted),added=added,pending=len(missing)-added,error=error)
         return added
 
     def load(self,config=None):
