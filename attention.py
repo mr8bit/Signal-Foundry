@@ -166,7 +166,8 @@ def story_query(title):
 
 
 QUERY_STOP={'the','and','for','with','from','that','this','are','its','new','how','why','what','your','you','has','have',
-            'will','into','over','about','says','said','just','now','can','after','more','than','one','our','their'}
+            'will','into','over','about','says','said','just','now','can','after','more','than','one','our','their',
+            'для','как','что','при','это','его','она','они','все','так','уже','или','над','под','без','про','чем','где'}
 
 
 def title_tokens(title):
@@ -261,10 +262,12 @@ class Lookups:
         data=json.loads(body)
         return [(key,'reactions',(data.get('reaction_count') or 0)+(data.get('restacks') or 0)),(key,'comments',data.get('comment_count'))]
 
-    def gnews(self,key,title,own_host=None):
+    def gnews(self,key,title,own_host=None,region=None):
         query=story_query(title)
         if not query:return []
-        body=self.fetch('gnews',key,'https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q='+quote(query))
+        # Russian stories are covered by Russian outlets, which the US edition of Google News does not list.
+        locale='hl=ru&gl=RU&ceid=RU:ru' if region=='ru' else 'hl=en-US&gl=US&ceid=US:en'
+        body=self.fetch('gnews',key,f'https://news.google.com/rss/search?{locale}&q='+quote(query))
         return [(key,'news_outlets',parse_gnews(body,title,own_host or key.split('/',1)[0]))] if body else []
 
     def most_read(self,name,url):
@@ -298,7 +301,7 @@ def refresh(posts,cfg,now=None,stop=None,store=None,http=None):
     for key,(url,p) in articles.items():
         if p.get('source_id') in settings['substack_sources'] and look.take('substack',key):rows+=look.substack(key,url)
     for key,(url,p) in articles.items():
-        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key,p['created_utc']):rows+=look.gnews(key,p['title'],p.get('publisher_host'))
+        if p.get('category') in settings['gnews_categories'] and not p.get('content_kind') and look.take('gnews',key,p['created_utc']):rows+=look.gnews(key,p['title'],p.get('publisher_host'),p.get('region'))
     for key,p in artifacts.items():
         if key.startswith('huggingface.co/') and p.get('content_kind')=='model' and p.get('provider_trending_score') is None and look.take('hf',key):
             rows+=look.hf(key)

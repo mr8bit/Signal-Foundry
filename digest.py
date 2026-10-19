@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from dashboard import PERIODS
 
 CATEGORIES={'all':'Overall','models':'Models','repos':'GitHub','papers':'Research papers',
-            'media':'Publications','enterprise':'Enterprise','cloud':'Cloud'}
+            'media':'Publications','enterprise':'Enterprise','cloud':'Cloud','russia':'Russia'}
 PERIOD_LABELS={'trending':'24 hours','day':'24 hours','week':'7 days','month':'30 days','year':'365 days','now':'48 hours'}
 SORTS=['trending','day','week','month','year','now']
 # Period tabs, mirrored from web/signal-ranking.js: the window counts from when a story became news (news_at),

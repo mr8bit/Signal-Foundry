@@ -101,6 +101,7 @@ def ranking_metadata(members):
     for p in members:
         if p.get('cloud_rule') or p.get('cloud_availability'):categories.add('cloud')
         if enterprise_reasons(p):categories.add('enterprise')
+        if p.get('region')=='ru':categories.add('russia')
         category=SIGNAL_CATEGORIES.get(p.get('category'))
         if not category:continue
         categories.add(category)
@@ -238,6 +239,10 @@ def reference_time(p):
 RELEASE_VERB=re.compile(r'^meet\b|\b(?:releas(?:e|es|ed|ing)|launch(?:es|ed)?|introduc(?:es|ing)|unveil(?:s|ed)?|reveal(?:s|ed)?|'
                         r'debut(?:s|ed)?|ships|announces|open[- ]sourc(?:es|ed|ing))\b',re.I)
 MODEL_WORD=re.compile(r'\b(?:models?|weights|LLMs?|VLMs?|VLAs?)\b',re.I)
+# The same for Russian headlines: "Сбер представил новую версию GigaChat", "Яндекс выпустил нейросеть".
+RU_RELEASE_VERB=re.compile(r'(?<!\w)(?:представил[аио]?|запустил[аио]?|выпустил[аио]?|анонсировал[аио]?|открыл[аио]? доступ|релиз\w*|'
+                           r'выложил[аио]? в открытый доступ|открыт[аоы]? для)(?!\w)',re.I)
+RU_MODEL_WORD=re.compile(r'(?<!\w)(?:модел\w*|нейросет\w*|LLM|GigaChat|ГигаЧат|YandexGPT|Kandinsky|ИИ-модел\w*)',re.I)
 # Publications' how-tos and listicles ("20 Jev Alternatives", "What It Really Costs") are not news, and their numbers
 # are examples, not measurements.
 LISTICLE=re.compile(r'^(?:the\s+)?(?:top\s+)?\d+\s+(?:[\w’\'.-]+\s+){0,3}(?:alternatives|tools|ways|tips|things|reasons|examples|lessons|insights)\b|'
@@ -246,7 +251,11 @@ LISTICLE=re.compile(r'^(?:the\s+)?(?:top\s+)?\d+\s+(?:[\w’\'.-]+\s+){0,3}(?:al
 POLICY=re.compile(r'\b(?:regulat\w*|laws?|lawsuits?|sue[sd]?|courts?|judges?|rulings?|ban(?:s|ned)?|export controls?|sanctions?|antitrust|'
                   r'FTC|AI Act|bills?|legislat\w*|senate|congress|government|ministry|acquir\w*|acquisitions?|mergers?|IPO|'
                   r'valuation|shares|layoffs?|lays off|hir(?:e|es|ed|ing)|workforce)\b|\$\s?\d+(?:\.\d+)?\s*(?:billion|bn|B)\b|'
-                  r'\$\s?[1-9]\d{2,}\s*(?:million|M)\b',re.I)
+                  r'\$\s?[1-9]\d{2,}\s*(?:million|M)\b|'
+                  # Russian: laws and the Duma, ministries and the government, courts, fines, bans, deals and investment.
+                  r'(?<!\w)(?:закон\w*|законопроект\w*|Госдум\w*|Совфед\w*|Минцифр\w*|Минэконом\w*|правительств\w*|регулир\w*|'
+                  r'суд\w*|штраф\w*|запрет\w*|санкци\w*|сделк\w*|приобрет\w*|покупк\w*|инвестиц\w*|выручк\w*|IPO|млрд|'
+                  r'нацпроект\w*|национальн\w* стратеги\w*|указ\w*|Путин\w*|Мишустин\w*|импортозамещ\w*)(?!\w)',re.I)
 POLICY_RELEVANCE=15
 
 
@@ -268,8 +277,12 @@ def priority(p,cfg=None):
     models=(cfg or {}).get('models',[])
     if base>1 and not p.get('content_kind') and not bot.TUTORIAL.search(p['title']) and (
             bot.matches(p['title'],models) and bot.matches(p['title'],RELEASE)
-            or publication(p) and RELEASE_VERB.search(p['title']) and MODEL_WORD.search(p['title'])):
+            or publication(p) and RELEASE_VERB.search(p['title']) and MODEL_WORD.search(p['title'])
+            or publication(p) and RU_RELEASE_VERB.search(p['title']) and RU_MODEL_WORD.search(p['title'])):
         return 1
+    # A Russian company announcing an AI product or service ("Сбер запустил GigaPlatform AI Studio") counts as Tools.
+    if base>3 and p.get('region')=='ru' and publication(p) and RU_RELEASE_VERB.search(p['title']) and bot.RU_AI.search(p['title']):
+        return 3
     return base
 
 

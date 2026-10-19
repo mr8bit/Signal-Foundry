@@ -2,7 +2,7 @@
 // The same functions run in the self-contained dashboard and offline Node checks.
 (function(root){
   const metrics={models:['trending','likes'],repos:['stars_day'],papers:['upvotes']};
-  const categories=['all','models','repos','papers','media','enterprise','cloud'];
+  const categories=['all','models','repos','papers','media','enterprise','cloud','russia'];
   // Period tabs (mirrored in digest.py). Every tab selects by when a story became news (news_at: publication,
   // model/paper creation, a repository's first day in GitHub Trending), never by the last read of a trend list,
   // so an August model trending again today is not "today's" news. Each tab sorts and headlines one measure:

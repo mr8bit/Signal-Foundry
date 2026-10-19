@@ -263,6 +263,22 @@ class Signals(unittest.TestCase):
         self.assertEqual((basis['relevance'],basis['evidence']),(6,0))
         self.assertEqual(signals.editorial_basis(news('China plans to tighten export controls on open-weight models'),[],CFG)[0]['relevance'],15)
 
+    def test_russian_publications_are_filtered_and_rated_by_their_headline(self):
+        import bot
+        ru=lambda title:post(title=title,selftext='',links=[],source_id='cnews_ru',source_name='CNews',region='ru',filter_mode='ru_ai')
+        self.assertIsNone(bot.reject(ru('Закон об ИИ поделил рынок на своих и остальных'),CFG,NOW))
+        # A general feed's headline must name AI: "модель" alone is any model.
+        self.assertEqual(bot.reject(ru('Минцифры планирует обязать 5G-смартфоны поддерживать новую модель шифрования'),CFG,NOW),'no keyword')
+        self.assertEqual(bot.reject(ru('Иисус и иконы: епископ о вере'),CFG,NOW),'no keyword')
+        level=lambda title:signals.story_level(ru(title),[],CFG)
+        self.assertEqual(level('Закон об ИИ поделил рынок на своих и остальных'),(5,'Policy & business'))
+        self.assertEqual(level('Сбер представил новую версию GigaChat'),(1,'Model release'))
+        self.assertEqual(level('«Сбер» запустил GigaPlatform AI Studio для проверки ИИ-гипотез')[0],3)
+        self.assertEqual(level('Сбербанк представил первый в России бенчмарк Cowork Bench для оценки ИИ-агентов')[0],3)
+        self.assertEqual(level('ИИ начал выявлять питбайкеров на дорогах Самарской области'),(5,'Industry'))
+        items=signals.build_items([ru('Закон об ИИ поделил рынок на своих и остальных')],CFG,NOW)
+        self.assertIn('russia',items[0]['signal_categories'])
+
     def test_model_name_and_self_link_are_not_evidence(self):
         model=post(content_kind='model',category='model',title='someone/Agens-32B-Preview',selftext='Parameters: 32,000,000',
                    url='https://huggingface.co/someone/Agens-32B-Preview',links=[],article_url='https://huggingface.co/someone/Agens-32B-Preview')

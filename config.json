@@ -245,6 +245,116 @@
       "filter_mode": "keywords"
     },
     {
+      "id": "cnews_ru",
+      "name": "CNews",
+      "url": "https://www.cnews.ru/inc/rss/news.xml",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "comnews_ru",
+      "name": "ComNews",
+      "url": "https://www.comnews.ru/rss",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "vedomosti_tech",
+      "name": "Ведомости · Технологии",
+      "url": "https://www.vedomosti.ru/rss/rubric/technology",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "kommersant",
+      "name": "Коммерсантъ",
+      "url": "https://www.kommersant.ru/RSS/news.xml",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "tass",
+      "name": "ТАСС",
+      "url": "https://tass.ru/rss/v2.xml",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "interfax",
+      "name": "Интерфакс",
+      "url": "https://www.interfax.ru/rss.asp",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "rbc",
+      "name": "РБК",
+      "url": "https://rssexport.rbc.ru/rbcnews/news/30/full.rss",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "d_russia",
+      "name": "D-Russia",
+      "url": "https://d-russia.ru/feed",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "rb_ru",
+      "name": "RB.RU",
+      "url": "https://rb.ru/feeds/all/",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "gnews_ru_companies",
+      "name": "Google News · ИИ-компании и облака РФ",
+      "url": "https://news.google.com/rss/search?q=%28GigaChat+OR+YandexGPT+OR+%22%D0%90%D0%BB%D0%B8%D1%81%D0%B0+AI%22+OR+%22Cloud.ru%22+OR+%22Yandex+Cloud%22+OR+%22VK+Cloud%22+OR+%22MWS+AI%22+OR+Selectel+OR+%D0%A1%D0%B1%D0%B5%D1%80+OR+%D0%AF%D0%BD%D0%B4%D0%B5%D0%BA%D1%81+OR+%D0%9C%D0%A2%D0%A1+OR+%D0%A0%D0%BE%D1%81%D1%82%D0%B5%D0%BB%D0%B5%D0%BA%D0%BE%D0%BC+OR+%D0%A2-%D0%91%D0%B0%D0%BD%D0%BA%29+%28%D0%98%D0%98+OR+%D0%BD%D0%B5%D0%B9%D1%80%D0%BE%D1%81%D0%B5%D1%82%D1%8C+OR+%22%D0%B8%D1%81%D0%BA%D1%83%D1%81%D1%81%D1%82%D0%B2%D0%B5%D0%BD%D0%BD%D1%8B%D0%B9+%D0%B8%D0%BD%D1%82%D0%B5%D0%BB%D0%BB%D0%B5%D0%BA%D1%82%22%29+when%3A2d&hl=ru&gl=RU&ceid=RU%3Aru",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
+      "id": "gnews_ru_law",
+      "name": "Google News · Регулирование ИИ в РФ",
+      "url": "https://news.google.com/rss/search?q=%28%22%D0%B7%D0%B0%D0%BA%D0%BE%D0%BD+%D0%BE%D0%B1+%D0%98%D0%98%22+OR+%22%D0%B7%D0%B0%D0%BA%D0%BE%D0%BD%D0%BE%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82+%D0%BE%D0%B1+%D0%98%D0%98%22+OR+%22%D1%80%D0%B5%D0%B3%D1%83%D0%BB%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5+%D0%98%D0%98%22+OR+%22%D1%80%D0%B5%D0%B3%D1%83%D0%BB%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F+%D0%98%D0%98%22+OR+%22%D1%80%D0%B5%D0%B3%D1%83%D0%BB%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B8+%D0%98%D0%98%22+OR+%22%D1%80%D0%B5%D0%B3%D1%83%D0%BB%D0%B8%D1%80%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F+%D0%B8%D1%81%D0%BA%D1%83%D1%81%D1%81%D1%82%D0%B2%D0%B5%D0%BD%D0%BD%D0%BE%D0%B3%D0%BE+%D0%B8%D0%BD%D1%82%D0%B5%D0%BB%D0%BB%D0%B5%D0%BA%D1%82%D0%B0%22+OR+%22%D0%B7%D0%B0%D0%BA%D0%BE%D0%BD+%D0%BE%D0%B1+%D0%B8%D1%81%D0%BA%D1%83%D1%81%D1%81%D1%82%D0%B2%D0%B5%D0%BD%D0%BD%D0%BE%D0%BC+%D0%B8%D0%BD%D1%82%D0%B5%D0%BB%D0%BB%D0%B5%D0%BA%D1%82%D0%B5%22+OR+%D0%9C%D0%B8%D0%BD%D1%86%D0%B8%D1%84%D1%80%D1%8B+OR+%D0%93%D0%BE%D1%81%D0%B4%D1%83%D0%BC%D0%B0%29+%28%D0%98%D0%98+OR+%D0%BD%D0%B5%D0%B9%D1%80%D0%BE%D1%81%D0%B5%D1%82%D0%B8+OR+%22%D0%B8%D1%81%D0%BA%D1%83%D1%81%D1%81%D1%82%D0%B2%D0%B5%D0%BD%D0%BD%D1%8B%D0%B9+%D0%B8%D0%BD%D1%82%D0%B5%D0%BB%D0%BB%D0%B5%D0%BA%D1%82%22%29+-site%3Avietnam.vn+-site%3Aua.news+when%3A2d&hl=ru&gl=RU&ceid=RU%3Aru",
+      "category": "news",
+      "region": "ru",
+      "enabled": true,
+      "format": "feed",
+      "filter_mode": "ru_ai"
+    },
+    {
       "id": "decoder",
       "name": "The Decoder",
       "url": "https://the-decoder.com/feed/",

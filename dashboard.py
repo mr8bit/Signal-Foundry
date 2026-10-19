@@ -55,6 +55,7 @@ def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):
               for category in ('models','repos','papers','media')}
     rankings['enterprise']=build_items([p for p in posts if enterprise_reasons(p)],cfg,now,focus='enterprise',**common)
     rankings['cloud']=build_items([p for p in posts if p.get('cloud_rule') or p.get('cloud_availability')],cfg,now,**common)
+    rankings['russia']=build_items([p for p in posts if p.get('region')=='ru'],cfg,now,**common)
     rankings={category:share_attention(rows,items) for category,rows in rankings.items()}
     return dict(generated_at=now,items=items,signal_rankings=rankings,statuses=statuses,cloud_pending=pending,
         sources=[dict(id=s['id'],name=s['name'],category=s['category'],categories=s.get('categories',[s['category']])) for s in cfg.get('feeds',[]) if s.get('enabled',True)]+[

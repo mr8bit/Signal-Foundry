@@ -77,7 +77,7 @@ def post(source, title, url, stamp, content, rank):
                 category=source['category'], filter_mode=source.get('filter_mode', 'keywords'),
                 created_utc=created, url=url, article_url=url, selftext=parser.text(),
                 links=list(dict.fromkeys(parser.links)), feed_rank=rank, score=None,
-                **{key:source[key] for key in ('cloud_rule','cloud_provider','cloud_label') if key in source})
+                **{key:source[key] for key in ('cloud_rule','cloud_provider','cloud_label','region') if key in source})
 
 
 def parse_site_feed(data, source):

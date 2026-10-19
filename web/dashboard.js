@@ -13,7 +13,7 @@ const periodOrder=()=>SignalRanking.PERIODS[state.period].order;
 const headline=p=>SignalRanking.headline(p,state.period);
 if(!SignalRanking.categories.includes(state.signalCategory))state.signalCategory='all';
 if(!['editorial','native'].includes(state.signalOrder))state.signalOrder='editorial';
-const SIGNAL_LABELS={all:'Overall',models:'Models',repos:'GitHub',papers:'Research papers',media:'Publications',enterprise:'Enterprise',cloud:'Cloud'};
+const SIGNAL_LABELS={all:'Overall',models:'Models',repos:'GitHub',papers:'Research papers',media:'Publications',enterprise:'Enterprise',cloud:'Cloud',russia:'Russia'};
 const GROUPS={repos:'GitHub Trending',models:'Hugging Face · Models',papers:'Hugging Face · Papers',community:'Community',media:'Media',labs:'Labs, cloud and authors'};
 const e=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=url=>{try{const u=new URL(url);return ['http:','https:'].includes(u.protocol)?e(u.href):'#'}catch{return '#'}};
@@ -23,7 +23,7 @@ const date=stamp=>new Date(stamp*1000).toLocaleString('en-US',{day:'numeric',mon
 const initial=name=>name.startsWith('r/')?'r/':name.split(/[\s·]+/).map(x=>x[0]).slice(0,2).join('').toUpperCase();
 let toastTimer;
 function toast(text){$('#toast').textContent=text;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),4500)}
-function items(input=DATA.items){const q=state.query.toLocaleLowerCase();return SignalRanking.select(input,state.period,now()).filter(p=>{return (state.topic==='all'||state.topic==='saved'&&state.saved.has(p.id)||['enterprise','cloud'].includes(state.topic)&&SignalRanking.belongs(p,state.topic)||String(p.priority)===state.topic)&&(!q||[p.title,p.summary,p.source_name,p.topic,...p.sources,...(p.also||[]).map(a=>a.source+' '+a.title)].join(' ').toLocaleLowerCase().includes(q))})}
+function items(input=DATA.items){const q=state.query.toLocaleLowerCase();return SignalRanking.select(input,state.period,now()).filter(p=>{return (state.topic==='all'||state.topic==='saved'&&state.saved.has(p.id)||['enterprise','cloud','russia'].includes(state.topic)&&SignalRanking.belongs(p,state.topic)||String(p.priority)===state.topic)&&(!q||[p.title,p.summary,p.source_name,p.topic,...p.sources,...(p.also||[]).map(a=>a.source+' '+a.title)].join(' ').toLocaleLowerCase().includes(q))})}
 function syncFilterUrl(){if(location.protocol==='file:')return;const url=new URL(location.href);url.searchParams.set('sort',state.period);url.searchParams.set('signals',state.signalCategory);history.replaceState(null,'',url)}
 function sourceBadge(p){return `<span class="source-label"><span class="source-icon">${e(initial(p.source_name))}</span><span class="source-name">${e(p.source_name)}</span></span>`}
 function saveButton(p){return `<button class="save-button ${state.saved.has(p.id)?'saved':''}" data-save="${p.id}" aria-label="${state.saved.has(p.id)?'Unsave story':'Save story'}" aria-pressed="${state.saved.has(p.id)}">${state.saved.has(p.id)?'★':'☆'}</button>`}

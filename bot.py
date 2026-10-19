@@ -72,6 +72,10 @@ def keys(post):
 RELEASE_CUES=['release', 'released', 'releases', 'launch', 'launches', 'launched', 'introducing', 'introduces', 'unveils',
               'announces', 'open-source', 'open-sources', 'open weights', 'open model', 'new model']
 # Tutorials explain how to use something; their bodies mention releases and benchmarks without being one.
+# Russian AI news (filter_mode ru_ai): general and business feeds mention "модель" or "агент" in any topic, so the
+# headline must name AI itself.
+RU_AI=re.compile(r'(?<![\w-])(?:ИИ(?![а-яё])|AI(?![a-z])|искусственн\w* интеллект\w*|нейросет\w*|нейронн\w* сет\w*|GigaChat|ГигаЧат|'
+                 r'YandexGPT|Алис[аы] AI|генеративн\w*|LLM|больш\w* языков\w* модел\w*|машинн\w* обучени\w*|Kandinsky|чат-бот\w*)',re.I)
 TUTORIAL=re.compile(r'^\s*(?:how to\b|tutorial\b|guide\b|a (?:coding|step[- ]by[- ]step|hands[- ]on|practical|complete|beginner\W?s?|full)\b|'
                     r'step[- ]by[- ]step\b|building an?\b|build an?\b|implementing\b|getting started\b)',re.I)
 
@@ -117,6 +121,8 @@ def reject(p, cfg, now, max_age_hours=None):
             return 'excluded keyword'
         cloud=cloud_decision(p,cfg)
         if cloud:return None if cloud.mode=='standalone' else 'cloud: '+cloud.reason
+        if p.get('filter_mode') == 'ru_ai':
+            return None if RU_AI.search(p['title']) else 'no keyword'
         if p.get('filter_mode') != 'all' and not matches(p['title'] + ' ' + p.get('selftext', '')[:1500], cfg.get('site_include', cfg['include'])):
             return 'no keyword'
         return None
