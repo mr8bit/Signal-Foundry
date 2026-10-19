@@ -782,7 +782,7 @@
   },
   "attention": {
     "enabled": true,
-    "budget_seconds": 150,
+    "budget_seconds": 60,
     "lookup_hours": 72,
     "gnews_categories": ["news", "lab", "newsletter"],
     "substack_sources": ["latent", "interconnects", "importai"],

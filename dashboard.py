@@ -134,7 +134,9 @@ def build(snapshot='data/feed-snapshot.json',limit=None):
     posts=json.loads(Path(snapshot).read_text())
     # Keep previously enriched article text; refresh is a separate explicit collection step.
     posts=archive_posts(posts)
-    try:embeddings.Store().refresh(posts)
+    # Only stories the filters keep are compared; general feeds bring many more (CNews: 28 of 200 are about AI).
+    now=time.time()
+    try:embeddings.Store().refresh([p for p in posts if not bot.reject(p,cfg,now,max_age_hours=8760)])
     except Exception:LOG.exception('embeddings_refresh_failed')
     status_path=Path('data/feed-status.json')
     statuses=json.loads(status_path.read_text()) if status_path.exists() else []

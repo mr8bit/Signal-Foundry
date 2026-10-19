@@ -20,7 +20,7 @@ import urllib.request
 LOG=logging.getLogger('embeddings')
 DIMS=256
 LEAD_CHARS=400
-BATCH=32
+BATCH=16
 PER_REFRESH=512
 # Instruction-tuned embedders (Qwen3, Giga-Embeddings) separate same-event reports from same-topic ones better with it.
 TASK='Instruct: Given a news headline and lead, retrieve reports about the same news event\nQuery: '
@@ -60,7 +60,7 @@ def request(texts,config):
     url,key,model=config
     headers={'Content-Type':'application/json'}|({'Authorization':'Bearer '+key} if key else {})
     body=json.dumps({'model':model,'input':[TASK+t for t in texts]}).encode()
-    with urllib.request.urlopen(urllib.request.Request(url+'/embeddings',body,headers),timeout=60) as response:
+    with urllib.request.urlopen(urllib.request.Request(url+'/embeddings',body,headers),timeout=90) as response:
         data=json.load(response)['data']
     return [x['embedding'] for x in sorted(data,key=lambda x:x['index'])]
 

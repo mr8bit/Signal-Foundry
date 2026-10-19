@@ -308,8 +308,8 @@ def refresh(posts,cfg,now=None,stop=None,store=None,http=None):
     for key,p in artifacts.items():
         if key.startswith('github.com/') and p.get('source_id')!='github_trending' and look.take('github',key):rows+=look.github(key)
     for key,(url,p) in articles.items():
-        # A Google News redirect is never the URL submitted to HN.
-        if not p.get('publisher_host') and look.take('hn',key,p['created_utc']):rows+=look.hn(key,url)
+        # A Google News redirect is never the URL submitted to HN, and Russian articles are rarely there.
+        if not p.get('publisher_host') and p.get('region')!='ru' and look.take('hn',key,p['created_utc']):rows+=look.hn(key,url)
     written+=store.record(rows,now)
     LOG.info('attention_refresh readings=%s lookups=%s errors=%s',written,dict(look.counts),dict(look.errors))
     return dict(readings=written,lookups=dict(look.counts),errors=dict(look.errors))
