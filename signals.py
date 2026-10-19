@@ -504,7 +504,10 @@ STORY_STOP={'the','and','for','with','from','that','this','these','those','has',
             'announces','unveils','meet','today','week'}
 COMMON_NAMES={'ai','api','llm','llms','gpu','gpus','moe','vram','gguf','sota','rag','mcp','cpu','ceo','ocr','tts','asr','vla',
               'openai','google','anthropic','meta','microsoft','nvidia','apple','amazon','aws','deepmind','chatgpt','claude',
-              'gemini','gpt','hugging','face','github','the','new','how','why','what'}
+              'gemini','gpt','hugging','face','github','the','new','how','why','what',
+              # Russian sentence-case headlines start with an ordinary word; these open many unrelated stories.
+              'ии','ai','россия','россии','российские','российский','российская','рф','нейросети','нейросеть','почему','как',
+              'что','где','когда','эксперт','эксперты','власти','компании','рынок','в','на','для'}
 
 
 # Two headlines about different companies are different news even when they share a place or a topic
@@ -526,14 +529,15 @@ def vendors(p):
 
 
 def story_words(text):
-    return [w for w in re.findall(r"\$?\d[\d.,]*[%bkmt]?|[a-z][a-z0-9.+\-]*[a-z0-9]",text.casefold())
+    return [w for w in re.findall(r"\$?\d[\d.,]*[%bkmt]?|[^\W\d_][\w.+\-]*[^\W_]",text.casefold())
             if len(w)>=3 and w not in STORY_STOP]
 
 
 def story_names(text,title=False):
     """Capitalised words, acronyms and versions. In a lead a sentence's first word is not a name; titles keep it."""
     found=set()
-    for m in re.finditer(r"[A-Za-z][A-Za-z0-9.+\-]*[A-Za-z0-9]",text):
+    # Any alphabet: "Минцифры" and "Сбер" name Russian stories as "Anthropic" names English ones.
+    for m in re.finditer(r"[^\W\d_][\w.+\-]*[^\W_]",text):
         word=m.group(0)
         start=not title and (m.start()==0 or re.search(r'[.!?:]\s*$',text[max(0,m.start()-3):m.start()]))
         # A version names a product (v4.1-flash-1017); a size or a year (600B, 1M, 2026) is shared by unrelated news.
@@ -565,7 +569,7 @@ class StoryIndex:
             self.vectors[key]={w:x/norm for w,x in weights.items()}
 
     def compare(self,a,b):
-        """(cosine, embedded, rare names shared by the titles, rare names shared anywhere)."""
+        """(cosine, embedded, rare names shared by the titles, rare names shared anywhere, names shared by the titles)."""
         ea,eb=self.embedded.get(id(a)),self.embedded.get(id(b))
         if ea and eb:cosine=embeddings.cosine(ea,eb)
         else:
@@ -573,16 +577,19 @@ class StoryIndex:
             cosine=sum(x*vb.get(w,0) for w,x in va.items())
         (_,ta,la),(_,tb,lb)=self.terms[id(a)],self.terms[id(b)]
         rare=lambda names:{w for w in names if self.idf(w)>=self.rare}
-        return cosine,bool(ea and eb),rare(ta&tb),rare((ta|la)&(tb|lb))
+        return cosine,bool(ea and eb),rare(ta&tb),rare((ta|la)&(tb|lb)),ta&tb
 
     def same_story(self,a,b,merge):
         """Merging needs a rare name in both titles. Coverage also takes two shared rare names from the leads, or
-        the same company in both titles with a rare title word ("Anthropic … junior staff" / "Anthropic … less junior")."""
+        the same company in both titles with a rare title word ("Anthropic … junior staff" / "Anthropic … less junior").
+        Embeddings tell retold news from different news themselves, so with them any shared title name will do: a story
+        retold by sixteen outlets makes its own names ("Минцифры", "VPN") too frequent to count as rare."""
         (wa,va),(wb,vb)=self.titles[id(a)],self.titles[id(b)]
         if va and vb and not va&vb:return False
-        cosine,embedded,titles,anywhere=self.compare(a,b)
+        cosine,embedded,titles,anywhere,shared=self.compare(a,b)
         merging,relating=(EMBED_MERGE,EMBED_RELATED) if embedded else (STORY_MERGE,STORY_RELATED)
         if cosine<(merging if merge else relating):return False
+        if embedded and shared:return True
         if merge:return bool(titles)
         return bool(titles) or len(anywhere)>=2 or bool(va&vb and any(self.idf(w)>=self.rare for w in wa&wb))
 
@@ -677,13 +684,14 @@ def product_words(artifacts):
     return {w for p in artifacts for w in name_words(p) if not re.search(r'\d',w) and len(w)>1 and w not in GENERIC}
 
 
-def variants(p,q,products):
+def variants(p,q,products=None):
     """Two stories naming one version with different product words are different products: "Nemotron-3.5-Parse" is not
     covered by "Nemotron 3.5 Super VL" news (the rule of similar_articles). Only product words count, so a thread
-    using a model in its own words ("Deepseek v4.1 1017 - Horse") still covers it."""
+    using a model in its own words ("Deepseek v4.1 1017 - Horse") still covers it. Without products every word counts
+    (merging, which hides a card, is stricter than coverage)."""
     wa,wb=name_words(p),name_words(q)
     anchors={w for w in wa if is_version(w)}&{w for w in wb if is_version(w)}
-    other=lambda x,y,v:{w for w in qualifiers(x,v) if w not in y and w in products}
+    other=lambda x,y,v:{w for w in qualifiers(x,v) if w not in y and (products is None or w in products)}
     return any(other(wa,wb,v) and other(wb,wa,v) for v in anchors)
 
 
@@ -704,20 +712,27 @@ def share_attention(rows,overall):
 def merge_similar(stories,index=None):
     """Cluster article stories (not models, repositories or papers) that report the same news.
 
-    Complete linkage: a story joins a cluster only if it matches every story already in it, so a chain
-    A~B~C never merges unrelated A and C. Stories are visited in publication order: the first report anchors.
-    Articles match by title (similar_articles) or, across outlets, as a retold story (StoryIndex)."""
+    A story joins a cluster when it is the same story as at least half of its members and at least related coverage of
+    every one, so a chain A~B~C never merges unrelated A and C, while short retold headlines that each miss the merge
+    threshold with a few members still come together. Stories are visited in publication order: the first report
+    anchors. Articles match by title (similar_articles) or, across outlets, as a retold story (StoryIndex)."""
     index=index or StoryIndex([s[0] for s in stories if not s[0].get('content_kind')])
-    def similar(p,q):
-        return similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,merge=True)
+    def link(p,q):
+        # "Nemotron 3.5 Bolt" and "Nemotron 3.5 Super VL" news never share a card, even through a family roundup.
+        if variants(p,q):return 0
+        if similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,merge=True):return 2
+        return 1 if publisher(p)!=publisher(q) and index.same_story(p,q,merge=False) else 0
+    def joins(p,cluster):
+        if any(abs(reference_time(p)[0]-reference_time(stories[j][0])[0])>MERGE_WINDOW for j in cluster):return False
+        links=[link(p,stories[j][0]) for j in cluster]
+        return all(links) and 2*links.count(2)>=len(cluster)
     order=sorted(range(len(stories)),key=lambda i:stories[i][0]['created_utc'])
     clusters=[]
     for i in order:
         p=stories[i][0]
         target=None
         if not p.get('content_kind'):
-            target=next((c for c in clusters if not stories[c[0]][0].get('content_kind') and all(
-                abs(reference_time(p)[0]-reference_time(stories[j][0])[0])<=MERGE_WINDOW and similar(p,stories[j][0]) for j in c)),None)
+            target=next((c for c in clusters if not stories[c[0]][0].get('content_kind') and joins(p,c)),None)
         if target is None:clusters.append([i])
         else:target.append(i)
     return clusters

@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 import dashboard
 import digest
+import embeddings
 import signals
 import xml.etree.ElementTree as ET
 
@@ -278,6 +279,24 @@ class Signals(unittest.TestCase):
         self.assertEqual(level('ИИ начал выявлять питбайкеров на дорогах Самарской области'),(5,'Industry'))
         items=signals.build_items([ru('Закон об ИИ поделил рынок на своих и остальных')],CFG,NOW)
         self.assertIn('russia',items[0]['signal_categories'])
+
+    def test_retold_russian_news_merges_by_names_in_any_alphabet(self):
+        self.assertIn('минцифры',signals.story_names('Минцифры предложило блокировать VPN с помощью ИИ',title=True))
+        self.assertNotIn('нейросети',signals.story_names('Нейросети нацелят против россиян',title=True))
+        n=[0]
+        def outlet(title,host):
+            n[0]+=1
+            return post(id=f'g{n[0]}',title=title,selftext='',links=[],source_id='gnews_ru_law',source_name=host,region='ru',
+                        publisher_host=host,url=f'https://news.google.com/rss/articles/{n[0]}',article_url=f'https://news.google.com/rss/articles/{n[0]}',
+                        created_utc=NOW-n[0]*600)
+        posts=[outlet('В Минцифры предлагали находить и блокировать VPN с помощью ИИ','meduza.io'),
+               outlet('Минцифры предложило использовать ИИ для блокировки VPN','verstka.media'),
+               outlet('В Минцифры оценили идею блокировать VPN с помощью ИИ','ura.news')]
+        same=[1.0]+[0.0]*(embeddings.DIMS-1);near=[0.8,0.6]+[0.0]*(embeddings.DIMS-2)
+        vectors={embeddings.digest(embeddings.story_text(p)):(embeddings.quantize(v),1.0) for p,v in zip(posts,[same,same,near])}
+        vectors={k:(v,sum(x*x for x in v)**0.5) for k,(v,_) in vectors.items()}
+        # The third retelling is 0.8 from the first two: the same story, joined by a shared name ("минцифры", "vpn").
+        self.assertEqual(len(signals.build_items(posts,CFG,NOW,vectors=vectors)),1)
 
     def test_model_name_and_self_link_are_not_evidence(self):
         model=post(content_kind='model',category='model',title='someone/Agens-32B-Preview',selftext='Parameters: 32,000,000',

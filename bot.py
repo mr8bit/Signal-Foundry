@@ -341,7 +341,7 @@ class RedditRSS:
                  'hf_papers':'hf_papers_ttl_seconds','html':'html_ttl_seconds'}.get((source or {}).get('format'),'rss_ttl_seconds')
         ttl=(source or {}).get('cache_ttl_seconds',self.http.policy[ttl_key])
         headers={'User-Agent':os.getenv('REDDIT_USER_AGENT','reddit-reposter/1.0'),
-                 'Accept':'application/json, application/atom+xml, application/rss+xml, application/xml, text/html;q=0.5'}
+                 'Accept':'application/json, application/atom+xml, application/rss+xml, application/xml, text/html;q=0.5, */*;q=0.1'}
         try:
             response=self.http.get(url,headers,ttl=ttl,timeout=timeout,validator=parse,loader=urlopen)
         except CacheError as exc:

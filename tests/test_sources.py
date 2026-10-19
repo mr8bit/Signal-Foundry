@@ -41,7 +41,7 @@ class Sources(unittest.TestCase):
 <source url="https://venturebeat.com">VentureBeat</source></item></channel></rss>'''
         [item]=parse_site_feed(feed,SOURCE)
         self.assertEqual(item['title'],'Gartner says agent costs will rise fivefold')
-        self.assertEqual((item['publisher_host'],item['selftext'],item['links']),('venturebeat.com','',[]))
+        self.assertEqual((item['publisher_host'],item['selftext'],item['links'],item['source_name']),('venturebeat.com','',[],'VentureBeat'))
         import signals
         self.assertEqual(signals.publisher(item),'venturebeat.com')
         # An ordinary feed item is untouched.

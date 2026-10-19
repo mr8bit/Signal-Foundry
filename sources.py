@@ -140,7 +140,8 @@ def google_news_item(item, outlet):
     host = (urlsplit(outlet.get('url', '')).hostname or '').lower().removeprefix('www.')
     name = (outlet.text or '').strip()
     title = item['title'][:-len(' - '+name)] if name and item['title'].endswith(' - '+name) else item['title']
-    return item | dict(title=title, selftext='', links=[], publisher_host=host or None)
+    # The card names the outlet ("Meduza"), not the search that found it.
+    return item | dict(title=title, selftext='', links=[], publisher_host=host or None, source_name=name or item['source_name'])
 
 
 class Newsroom(HTMLParser):
