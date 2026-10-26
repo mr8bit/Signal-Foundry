@@ -72,8 +72,8 @@ def migrate_sqlite(source,include_control=False):
                 sql=f'INSERT INTO {table} ({",".join(columns)}) VALUES ({placeholders}) ON CONFLICT DO NOTHING'
                 destination.cursor().executemany(sql,rows)
                 print(f'{table}: imported up to {len(rows)} rows')
-        for table in ('jobs','deliveries'):
-            destination.execute(f"SELECT setval(pg_get_serial_sequence('{table}','id'),GREATEST((SELECT COALESCE(MAX(id),1) FROM {table}),1))")
+        for table,column in (('jobs','id'),('deliveries','id'),('news','position')):
+            destination.execute(f"SELECT setval(pg_get_serial_sequence('{table}','{column}'),GREATEST((SELECT COALESCE(MAX({column}),1) FROM {table}),1))")
     for name in FILES:
         src=source/name;dst=target/name
         if src.exists() and not dst.exists():shutil.copy2(src,dst)
