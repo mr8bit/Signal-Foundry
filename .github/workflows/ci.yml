@@ -35,6 +35,8 @@ jobs:
           result=[]; body=b''.join(create_app()({'PATH_INFO':'/health/live','REQUEST_METHOD':'GET'},lambda status,headers:result.append(status)));
           assert result==['200 OK'] and b'alive' in body"
       - name: Validate proxy configuration
+        env:
+          POSTGRES_PASSWORD: test
         run: docker compose -f compose.yaml -f compose.https.yaml run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   publish:
