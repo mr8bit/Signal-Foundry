@@ -6,7 +6,7 @@ The interface and generated labels are in English. News titles, excerpts and pap
 
 ## Quick start
 
-Requires a Linux host with Docker Engine, Docker Compose v2 and a local disk for SQLite. Allow at least 2 GB of RAM. Python 3 is needed to initialize the environment; Python 3.11+ and Node.js 22 are needed for local development and checks. The container uses Python 3.12 and Gunicorn.
+Requires a Linux host with Docker Engine, Docker Compose v2 and local disks for PostgreSQL and feed data. Allow at least 2 GB of RAM. Python 3 is needed to initialize the environment; Python 3.11+ and Node.js 22 are needed for local development and checks. The container uses Python 3.12 and Gunicorn.
 
 ```sh
 git clone https://github.com/mr8bit/Signal-Foundry.git
@@ -15,9 +15,9 @@ python3 ops.py init-env
 make up
 ```
 
-Open **http://127.0.0.1:8765**. `make up` automatically builds the local image and starts `worker` and `web`. Initial collection runs in the background; the page becomes ready after the first successful publication.
+Open **http://127.0.0.1:8765**. `make up` automatically builds the local image and starts the internal `postgres` service, `worker` and `web`. Initial collection runs in the background; the page becomes ready after the first successful publication.
 
-`init-env` generates a management key and creates `.env` with mode `0600`. It preserves an existing file. Configure sources in `config.json`; keep secrets in `.env`. A Telegram token is not needed to use the dashboard.
+`init-env` generates a management key and PostgreSQL password and creates `.env` with mode `0600`. For an existing `.env`, it adds a missing `POSTGRES_PASSWORD` without changing other settings. `POSTGRES_DB`, `POSTGRES_USER` and `POSTGRES_PASSWORD` are required. Configure sources in `config.json`; keep secrets in `.env`. A Telegram token is not needed to use the dashboard.
 
 ## Prebuilt Docker images
 
@@ -48,30 +48,31 @@ make status
 
 `make deploy` combines `compose.yaml` and `compose.release.yaml`. The override pulls `SIGNAL_RELEASE_IMAGE` (default `ghcr.io/mr8bit/signal-foundry:latest`) for the worker, web, publisher and operations commands. It respects the same data volumes and source configuration as local builds. Updating the image does not automatically deploy it to a server: run `make deploy` there after a successful build.
 
-For reproducible production releases, pin a version or image digest. Keep the previous image and a data backup before an upgrade. The default Docker volume remains `reddit-reposter_signal-data` so existing installations keep their history.
+For reproducible production releases, pin a version or image digest. Keep the previous image and a data backup before an upgrade. The default volumes are `reddit-reposter_signal-postgres` for PostgreSQL and `reddit-reposter_signal-data` for feed data.
 
 ## Services and persistent data
 
 | Service | Responsibility | Enabled by default |
 |---|---|---|
+| `postgres` | Internal PostgreSQL 17 database (`postgres:17-alpine`) | Yes |
 | `worker` | Collect sources, maintain the archive and publish dashboard generations | Yes |
 | `web` | Serve published HTML and APIs through Gunicorn | Yes |
 | `publisher` | Send selected stories to Telegram | No; `telegram` profile |
-| `backup` / `import` | Back up and import data | No; `ops` profile |
+| `backup` / `import` | Back up PostgreSQL/files and import legacy SQLite data | No; `ops` profile |
 | `proxy` | Optional HTTPS through Caddy | No; HTTPS override |
 
 Web requests only read published generations. Opening the dashboard, querying an API or changing a filter never fetches external sites. New generations become visible atomically; a failed collection leaves the previous generation available.
 
-The data volume holds `news.sqlite3`, HTTP cache, source schedules, feed snapshots, the management queue, heartbeat state, dashboard generations and Telegram delivery history. Containers run as UID 10001 with read-only root filesystems, a temporary `/tmp`, dropped capabilities, resource limits, restart policies and rotated logs. Docker healthchecks detect unhealthy processes; they do not themselves restart a running unhealthy container.
+PostgreSQL stores news, HTTP cache, schedules, attention history, embeddings, the service queue, heartbeat state and Telegram deliveries; coordination uses advisory locks. Its volume is set by `SIGNAL_POSTGRES_VOLUME` (default `reddit-reposter_signal-postgres`). The old `signal-data` volume remains for feed snapshots and publication generations and serves as the migration source. Redis is not used. Containers run as UID 10001 with read-only root filesystems, a temporary `/tmp`, dropped capabilities, resource limits, restart policies and rotated logs. Docker healthchecks detect unhealthy processes; they do not themselves restart a running unhealthy container.
 
 Import an existing local archive **before** starting the new collector:
 
 ```sh
-docker compose --profile ops run --rm --no-deps import
+docker compose --profile ops run --rm import
 make up
 ```
 
-The import preserves nonempty destination files. Do not run it while the old process is writing to the source data. Do not run `bot.py` or `server.py` against the same databases as the production services. Never use `docker compose down -v` for a normal update.
+The command runs `python ops.py migrate-sqlite /import`, reads legacy SQLite files from `./data` into PostgreSQL and preserves the source files. Existing destination rows and nonempty feed files are preserved. Do not run it while the old process is writing to the source data. Do not run `bot.py` or `server.py` against the same database as the production services. Never use `docker compose down -v` for a normal update.
 
 ## HTTPS
 
@@ -139,7 +140,7 @@ Attention (0–25) joins every signal of interest in a story. Each channel is ra
 
 | Family | Channels | Where the data comes from |
 |---|---|---|
-| Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, HN/Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in `data/attention.sqlite3`, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
+| Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, HN/Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in PostgreSQL, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
 | Discussion | HN points for the story's URL | hnrss items and HN Algolia lookups |
 | Reach | Independent platforms in our sources; other outlets reporting the same headline in Google News within 48 hours (at least three shared headline words and two fifths of the shorter headline; the article's own outlet excluded) | Story grouping and Google News RSS |
 
@@ -165,7 +166,7 @@ The dashboard also merges matching articles published within 48 hours. Shared ve
 
 Outlets often retell a story in other words, so articles from different platforms also merge as a retold story: cosine similarity of at least 0.40 over the title (weighted twice) and the first 400 characters of the text, with words weighted by inverse document frequency over the build, plus a rare name in both titles. A name is a capitalised word (not a sentence start in the text), an acronym or a version; parameter sizes, years, generic acronyms (MoE, OCR, LLM) and vendor names are not names, and a name counts as rare when at most eight stories of the build contain it. Headlines about different companies (named in the title, or the lab whose blog published the post) never match.
 
-With an embeddings API configured (`SIGNAL_EMBEDDINGS_URL`, `SIGNAL_EMBEDDINGS_KEY`, `SIGNAL_EMBEDDINGS_MODEL`; any OpenAI-compatible `POST {url}/embeddings`), two stories that both have a vector are compared by embedding cosine instead: 0.68 to merge, 0.56 for related coverage, with the same name, company and time rules. The text is the title and the first 400 characters with a same-event retrieval instruction. Thresholds are calibrated for `ai-sage/Giga-Embeddings-instruct-3B` on Cloud.ru Foundation Models; on labelled pairs from the archive it kept every different-event pair below 0.55 while TF-IDF could not separate them. Each dashboard build embeds at most 512 new stories, newest first; the API is never called while ranking, and a story without a vector (new, failed request, no key) falls back to TF-IDF. Vectors are cut to 256 dimensions and stored as int8 in `data/embeddings.sqlite3`, about 400 bytes per story on disk; they are keyed by text and model, so changing the model re-embeds the archive and removed stories are pruned. No vector index is used: stories are only compared within a 72-hour window. With vectors any name shared by both titles is enough (names are capitalised words in any alphabet), since a story retold by many outlets makes its own names too frequent to count as rare. A story joins a merged card when it is the same story as at least half of the card's reports and related coverage of all of them; reports naming one version with different words (Nemotron 3.5 Bolt and Super VL) never share a card. Google News items show the outlet that published them.
+With an embeddings API configured (`SIGNAL_EMBEDDINGS_URL`, `SIGNAL_EMBEDDINGS_KEY`, `SIGNAL_EMBEDDINGS_MODEL`; any OpenAI-compatible `POST {url}/embeddings`), two stories that both have a vector are compared by embedding cosine instead: 0.68 to merge, 0.56 for related coverage, with the same name, company and time rules. The text is the title and the first 400 characters with a same-event retrieval instruction. Thresholds are calibrated for `ai-sage/Giga-Embeddings-instruct-3B` on Cloud.ru Foundation Models; on labelled pairs from the archive it kept every different-event pair below 0.55 while TF-IDF could not separate them. Each dashboard build embeds at most 512 new stories, newest first; the API is never called while ranking, and a story without a vector (new, failed request, no key) falls back to TF-IDF. Vectors are cut to 256 dimensions and stored as int8 in PostgreSQL, about 400 bytes per story; they are keyed by text and model, so changing the model re-embeds the archive and removed stories are pruned. No vector index is used: stories are only compared within a 72-hour window. With vectors any name shared by both titles is enough (names are capitalised words in any alphabet), since a story retold by many outlets makes its own names too frequent to count as rare. A story joins a merged card when it is the same story as at least half of the card's reports and related coverage of all of them; reports naming one version with different words (Nemotron 3.5 Bolt and Super VL) never share a card. Google News items show the outlet that published them.
 
 Artifact cards remain separate: model variants are distinct. Official sources are preferred as article representatives, followed by publications and earlier reports. Multi-topic newsletters do not become lead cards. Merged reports remain linked under **Also covered by** and in the `also` API field. The score breakdown (the headline score link on a card) lists every report behind the card with its link: merged ones, including entries grouped by a shared model or repository link, and related coverage that adds points without merging; the API exposes the same list as `story_links`. Story IDs follow stable identities so saved cards survive additional coverage.
 
@@ -231,7 +232,7 @@ Production collects one due source per persistent job. Defaults: RSS every 30 mi
 | HF Papers | 60 minutes |
 | TechCrunch article text | 6 hours |
 
-`http_cache.py` stores responses in SQLite, shared across processes with host/URL file locks. Configure it through `config.json` → `cache` or change the database path with `HTTP_CACHE_DB`. Shorter configured TTLs also affect already-cached responses.
+`http_cache.py` stores responses and host/URL coordination in PostgreSQL. Configure it through `config.json` → `cache`. Shorter configured TTLs also affect already-cached responses.
 
 Conditional requests use ETag/Last-Modified. A 304 revalidates without downloading the body; a fresh cache hit does not reset observation time. New responses are parsed before replacing good cached data, so a block page or invalid JSON cannot poison the cache.
 
@@ -258,10 +259,10 @@ Posts include a category, bold title, original excerpt and source/discussion lin
 
 Before sending, the publisher writes `pending`; on confirmed success it records `sent` and the Telegram message ID. A timeout can leave a message delivered but unconfirmed. Pending delivery blocks further sending until reviewed, avoiding blind retries. Telegram 429/access failures also require checking that record. Exactly-once delivery is not guaranteed by Telegram.
 
-Stop the publisher, inspect the channel, then open the correct `state.sqlite3` in the Docker volume. For a standalone local installation with Python 3.12+:
+Stop the publisher, inspect the channel, then connect to PostgreSQL. Deliveries and aliases are stored in the `deliveries` and `aliases` tables:
 
 ```sh
-python3 -m sqlite3 data/state.sqlite3
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
 ```sql
@@ -320,16 +321,16 @@ make backup
 For published-image deployments, operations must use the release override too:
 
 ```sh
-docker compose -f compose.yaml -f compose.release.yaml --profile ops run --rm --no-deps backup
+docker compose -f compose.yaml -f compose.release.yaml --profile ops run --rm backup
 docker compose exec worker python source_diagnostics.py
 docker compose exec worker python source_diagnostics.py --probe --source 'GitHub Trending'
 ```
 
 A probe respects TTL and cooldown. Readiness requires a recent collector heartbeat and a publication younger than `SIGNAL_READY_MAX_AGE` (default two hours). Monitor stale publications, collection failures and per-source status separately.
 
-Backups use SQLite's online backup API with integrity checks and go to a timestamped directory in the backup volume. Store copies off-host and keep `.env` separately. For a consistent backup across all databases and snapshots, stop writers first. Restore into a new volume so the old one remains available for rollback. A Git checkout does not contain the archive or Telegram history.
+`make backup` / `ops.py backup` writes a custom-format `pg_dump` archive as `postgres.dump` plus feed files to a timestamped directory in the backup volume. Store copies off-host and keep `.env` separately. For a consistent backup across the database and snapshots, stop writers first. Restore with `python ops.py restore /path` only into an empty PostgreSQL database; use new volumes so the old ones remain available for rollback. A Git checkout does not contain the archive or Telegram history.
 
-The [deployment runbook](DEPLOYMENT.md) covers import, backup export, restoration, resource limits, proxy configuration and rollback. This is a single-host service; SQLite/filesystem locks do not provide multi-host replication.
+The [deployment runbook](DEPLOYMENT.md) covers import, backup export, restoration, resource limits, proxy configuration and rollback. This is a single-host service; no multi-host replication is provided.
 
 ## Development and offline previews
 

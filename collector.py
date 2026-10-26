@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The single source-fetching process. Web workers only read published generations."""
 import argparse
-import fcntl
+from contextlib import ExitStack
 import json
 import logging
 import os
@@ -10,6 +10,7 @@ import signal
 import threading
 import time
 import attention
+import db
 import bot
 import dashboard
 from publication import Publications
@@ -68,8 +69,8 @@ class Collector:
 
     def run(self,once=False):
         Path('data').mkdir(exist_ok=True)
-        with Path('data/collector.lock').open('a') as lock:
-            try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        with ExitStack() as stack:
+            try:stack.enter_context(db.advisory_lock('collector:process',blocking=False))
             except BlockingIOError:raise RuntimeError('A collector is already running') from None
             self.state.recover()
             self.state.heartbeat('collector',scoring_version=SCORING_VERSION)

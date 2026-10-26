@@ -1,4 +1,4 @@
-"""Story vectors from an optional OpenAI-compatible embeddings API (SIGNAL_EMBEDDINGS_URL/KEY/MODEL), cached in SQLite.
+"""Story vectors from an optional OpenAI-compatible embeddings API (SIGNAL_EMBEDDINGS_URL/KEY/MODEL), cached in PostgreSQL.
 
 A dashboard build embeds only stories it has not seen, at most PER_REFRESH of them, so a slow or failing API
 delays matching by a cycle and never blocks a publication; stories without a vector fall back to TF-IDF.
@@ -13,9 +13,9 @@ import logging
 import math
 from operator import mul
 import os
-from pathlib import Path
-import sqlite3
 import urllib.request
+
+import db
 
 LOG=logging.getLogger('embeddings')
 DIMS=256
@@ -67,16 +67,8 @@ def request(texts,config):
 
 class Store:
     def __init__(self,path=None):
-        self.path=Path(path or os.getenv('SIGNAL_EMBEDDINGS_DB','data/embeddings.sqlite3'))
         # Outcome of the last refresh for monitoring: vectors added, still missing, the failure class if any.
         self.last={}
-
-    def connect(self):
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        db=sqlite3.connect(self.path,timeout=30)
-        db.execute('''CREATE TABLE IF NOT EXISTS vectors (digest BLOB NOT NULL, model TEXT NOT NULL, vector BLOB NOT NULL,
-            PRIMARY KEY (digest,model)) WITHOUT ROWID''')
-        return db
 
     def refresh(self,posts,config=None,embed=request):
         """Embed new stories, newest first, and drop vectors of stories that left the archive or of another model."""
@@ -85,10 +77,10 @@ class Store:
         wanted={}
         for p in sorted(filter(is_story,posts),key=lambda p:-p['created_utc']):
             text=story_text(p);wanted.setdefault(digest(text),text)
-        with self.connect() as db:
-            db.execute('DELETE FROM vectors WHERE model!=?',(config[2],))
-            stored={row[0] for row in db.execute('SELECT digest FROM vectors')}
-            db.executemany('DELETE FROM vectors WHERE digest=?',((d,) for d in stored-wanted.keys()))
+        with db.connect() as connection:
+            connection.execute('DELETE FROM vectors WHERE model!=%s',(config[2],))
+            stored={bytes(row['digest']) for row in connection.execute('SELECT digest FROM vectors')}
+            connection.cursor().executemany('DELETE FROM vectors WHERE digest=%s',((d,) for d in stored-wanted.keys()))
         missing=[d for d in wanted if d not in stored]
         added=0;error=''
         limit=min(len(missing),PER_REFRESH)
@@ -98,9 +90,10 @@ class Store:
             except Exception as exc:
                 error=exc.__class__.__name__
                 LOG.warning('embeddings_failed added=%s error=%s',added,error);break
-            with self.connect() as db:
-                db.executemany('INSERT OR REPLACE INTO vectors VALUES (?,?,?)',
-                               ((d,config[2],quantize(v).tobytes()) for d,v in zip(batch,vectors)))
+            with db.connect() as connection:
+                connection.cursor().executemany('''INSERT INTO vectors (digest,model,vector) VALUES (%s,%s,%s)
+                    ON CONFLICT (digest,model) DO UPDATE SET vector=EXCLUDED.vector''',
+                                       ((d,config[2],quantize(v).tobytes()) for d,v in zip(batch,vectors)))
             added+=len(batch)
         if added:LOG.info('embeddings_added count=%s pending=%s',added,len(missing)-added)
         self.last=dict(model=config[2],stories=len(wanted),added=added,pending=len(missing)-added,error=error)
@@ -109,10 +102,10 @@ class Store:
     def load(self,config=None):
         """{digest: (int8 values, norm)} for the configured model; empty without one."""
         config=config or settings()
-        if not config or not self.path.exists():return {}
+        if not config:return {}
         result={}
-        with self.connect() as db:
-            for key,blob in db.execute('SELECT digest,vector FROM vectors WHERE model=?',(config[2],)):
-                values=array.array('b',blob)
-                result[key]=(values,math.sqrt(sum(map(mul,values,values))) or 1)
+        with db.connect() as connection:
+            for row in connection.execute('SELECT digest,vector FROM vectors WHERE model=%s',(config[2],)):
+                values=array.array('b',row['vector'])
+                result[bytes(row['digest'])]=(values,math.sqrt(sum(map(mul,values,values))) or 1)
         return result

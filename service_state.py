@@ -1,61 +1,47 @@
 """Durable refresh queue and service heartbeats shared across worker processes."""
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
-import sqlite3
 import time
+import db
 
 
 class ServiceState:
     def __init__(self,path=None):
-        self.path=Path(path or os.getenv('SIGNAL_CONTROL_DB','data/service.sqlite3'))
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        with self.connect() as db:
-            db.execute('PRAGMA journal_mode=WAL')
-            db.executescript('''CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY,requested REAL NOT NULL,
-                started REAL,finished REAL,status TEXT NOT NULL,error TEXT);
-                CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status,id);''')
+        pass
 
-    @contextmanager
     def connect(self):
-        db=sqlite3.connect(self.path,timeout=20);db.row_factory=sqlite3.Row
-        try:yield db;db.commit()
-        except Exception:db.rollback();raise
-        finally:db.close()
+        return db.connect()
 
     def set(self,key,value):
         with self.connect() as db:
-            db.execute('INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            db.execute('INSERT INTO meta VALUES (%s,%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                        (key,json.dumps(value)))
 
     def get(self,key,default=None):
-        with self.connect() as db:row=db.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
-        return json.loads(row[0]) if row else default
+        with self.connect() as db:row=db.execute('SELECT value FROM meta WHERE key=%s',(key,)).fetchone()
+        return json.loads(row['value']) if row else default
 
     def heartbeat(self,role,status='running',**extra):
         self.set('heartbeat:'+role,dict(at=time.time(),pid=os.getpid(),status=status,**extra))
 
     def enqueue(self,cooldown=60):
         now=time.time()
-        with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            active=db.execute("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id LIMIT 1").fetchone()
-            if active:return dict(status='refreshing',job_id=active['id'],retry_after=0)
-            last=db.execute('SELECT * FROM jobs ORDER BY id DESC LIMIT 1').fetchone()
-            if last and now-last['requested']<cooldown:
-                return dict(status='cached',job_id=last['id'],retry_after=max(1,int(cooldown-(now-last['requested']))))
-            job=db.execute("INSERT INTO jobs(requested,status) VALUES (?,'queued')",(now,)).lastrowid
-            return dict(status='refreshing',job_id=job,retry_after=0)
+        with db.advisory_lock('service:enqueue'):
+            with self.connect() as conn:
+                active=conn.execute("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id LIMIT 1").fetchone()
+                if active:return dict(status='refreshing',job_id=active['id'],retry_after=0)
+                last=conn.execute('SELECT * FROM jobs ORDER BY id DESC LIMIT 1').fetchone()
+                if last and now-last['requested']<cooldown:
+                    return dict(status='cached',job_id=last['id'],retry_after=max(1,int(cooldown-(now-last['requested']))))
+                job=conn.execute("INSERT INTO jobs(requested,status) VALUES (%s,'queued') RETURNING id",(now,)).fetchone()['id']
+                return dict(status='refreshing',job_id=job,retry_after=0)
 
     def claim(self):
         with self.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            row=db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
-            if not row:return None
-            db.execute("UPDATE jobs SET status='running',started=? WHERE id=?",(time.time(),row['id']))
-            return dict(row)
+            row=db.execute('''WITH next AS (SELECT id FROM jobs WHERE status='queued' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                UPDATE jobs SET status='running',started=%s FROM next WHERE jobs.id=next.id RETURNING jobs.*''',
+                           (time.time(),)).fetchone()
+            return dict(row) if row else None
 
     def recover(self):
         # Called only after acquiring the collector's exclusive process lock.
@@ -65,12 +51,12 @@ class ServiceState:
     def finish(self,job_id,error=None):
         now=time.time()
         with self.connect() as db:
-            db.execute('UPDATE jobs SET status=?,finished=?,error=? WHERE id=?',('failed' if error else 'done',now,error,job_id))
-            db.execute("DELETE FROM jobs WHERE finished IS NOT NULL AND finished<?",(now-30*86400,))
+            db.execute('UPDATE jobs SET status=%s,finished=%s,error=%s WHERE id=%s',('failed' if error else 'done',now,error,job_id))
+            db.execute("DELETE FROM jobs WHERE finished IS NOT NULL AND finished<%s",(now-30*86400,))
             key='collections_failed' if error else 'collections_succeeded'
-            row=db.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
-            count=json.loads(row[0]) if row else 0
-            db.execute('INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,json.dumps(count+1)))
+            row=db.execute('SELECT value FROM meta WHERE key=%s',(key,)).fetchone()
+            count=json.loads(row['value']) if row else 0
+            db.execute('INSERT INTO meta VALUES (%s,%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,json.dumps(count+1)))
         if not error:self.set('last_success',now)
 
     def status(self):

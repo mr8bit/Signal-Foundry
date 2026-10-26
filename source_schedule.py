@@ -8,6 +8,7 @@ import time
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 import bot
+import db
 
 LOG=logging.getLogger('source_schedule')
 DEFAULTS=dict(rss_seconds=1800,reddit_seconds=3600,trend_seconds=3600,papers_seconds=7200,
@@ -26,10 +27,6 @@ def feed_targets(cfg,now=None):
 class SourceSchedule:
     def __init__(self,state,client):
         self.state=state;self.client=client;self.signature=None;self.targets=[]
-        with state.connect() as db:
-            db.execute('''CREATE TABLE IF NOT EXISTS source_schedule (
-                url TEXT PRIMARY KEY,name TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL,
-                next_at REAL NOT NULL,last_attempt REAL NOT NULL DEFAULT 0,last_success REAL NOT NULL DEFAULT 0)''')
 
     def interval(self,source,cfg):
         policy=DEFAULTS|cfg.get('collection',{})
@@ -64,32 +61,38 @@ class SourceSchedule:
             row=self.client.http.read(url) or {}
             due=max(now+index*policy['startup_spread_seconds']+random.uniform(0,policy['startup_spread_seconds']),
                     row.get('validated_at',0)+interval,self.client.http.not_before(url))
-            with self.state.connect() as db:
-                db.execute('INSERT OR IGNORE INTO source_schedule(url,name,payload,status,next_at,last_success) VALUES (?,?,?,?,?,?)',
+            with db.connect() as conn:
+                conn.execute('INSERT INTO source_schedule(url,name,payload,status,next_at,last_success) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(url) DO NOTHING',
                            (url,name,json.dumps(batch,ensure_ascii=False),json.dumps(status,ensure_ascii=False),due,status.get('checked_at') or 0))
         self.targets=targets;self.known=known;self.policy=policy;self.signature=signature
 
     def rows(self):
-        with self.state.connect() as db:
-            return {row['url']:dict(row) for row in db.execute('SELECT * FROM source_schedule')}
+        with db.connect() as conn:
+            return {row['url']:dict(row) for row in conn.execute('SELECT * FROM source_schedule')}
 
-    def due(self,row):
-        return max(row['next_at'],self.client.http.not_before(row['url']),self.state.get('collection_next_request',0))
+    def pacing(self):
+        urls=[url for _,url,_ in self.targets]
+        return self.client.http.not_before_many(urls),self.state.get('collection_next_request',0)
+
+    def due(self,row,not_before=None,next_request=None):
+        if not_before is None:not_before=self.client.http.not_before(row['url'])
+        if next_request is None:next_request=self.state.get('collection_next_request',0)
+        return max(row['next_at'],not_before,next_request)
 
     def next_due(self,cfg):
-        self.sync(cfg);rows=self.rows()
-        return min((self.due(rows[url]) for _,url,_ in self.targets),default=time.time()+60)
+        self.sync(cfg);rows=self.rows();not_before,next_request=self.pacing()
+        return min((self.due(rows[url],not_before[url],next_request) for _,url,_ in self.targets),default=time.time()+60)
 
     def snapshot(self,changed=False):
-        rows=self.rows();posts=[];statuses=[];last=0
+        rows=self.rows();not_before,next_request=self.pacing();posts=[];statuses=[];last=0
         for name,url,_ in self.targets:
             row=rows[url];posts+=json.loads(row['payload']);status=json.loads(row['status'])
-            status['next_fetch_at']=self.due(row);statuses.append(status);last=max(last,row['last_success'])
+            status['next_fetch_at']=self.due(row,not_before[url],next_request);statuses.append(status);last=max(last,row['last_success'])
         return dict(posts=posts,statuses=statuses,changed=changed,collected_at=last)
 
     def collect(self,cfg,stop_event):
-        self.sync(cfg);rows=self.rows();now=time.time()
-        ready=[target for target in self.targets if self.due(rows[target[1]])<=now]
+        self.sync(cfg);rows=self.rows();not_before,next_request=self.pacing();now=time.time()
+        ready=[target for target in self.targets if self.due(rows[target[1]],not_before[target[1]],next_request)<=now]
         if not ready:return self.snapshot()
         name,url,source=min(ready,key=lambda target:rows[target[1]]['next_at'])
         row=rows[url];batch=json.loads(row['payload']);last_success=row['last_success']
@@ -114,8 +117,8 @@ class SourceSchedule:
         if stop_event.is_set():raise RuntimeError('Collection cancelled')
         interval=self.interval(source,cfg)
         due=max(time.time()+interval*(1+random.uniform(0,self.policy['jitter_ratio'])),self.client.http.not_before(url))
-        with self.state.connect() as db:
-            db.execute('UPDATE source_schedule SET payload=?,status=?,next_at=?,last_attempt=?,last_success=? WHERE url=?',
+        with db.connect() as conn:
+            conn.execute('UPDATE source_schedule SET payload=%s,status=%s,next_at=%s,last_attempt=%s,last_success=%s WHERE url=%s',
                        (json.dumps(batch,ensure_ascii=False),json.dumps(status,ensure_ascii=False),due,now,last_success,url))
         self.state.set('collection_next_request',time.time()+self.policy['request_gap_seconds']*(1+random.uniform(0,self.policy['jitter_ratio'])))
         LOG.info('source_finished name=%s status=%s next_at=%.0f',name,status['status'],due)

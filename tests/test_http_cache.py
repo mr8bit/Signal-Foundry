@@ -26,6 +26,7 @@ class Response:
 
 class Cache(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.temp=tempfile.TemporaryDirectory();self.path=self.temp.name+'/http.db'
         self.cache=HTTPCache(self.path,{'min_host_interval_seconds':0})
     def tearDown(self):self.temp.cleanup()
@@ -160,6 +161,14 @@ class Cache(unittest.TestCase):
             other=HTTPCache(self.path,{'min_host_interval_seconds':2})
             other.get('https://cache.test/b',loader=lambda *a,**k:Response())
             wait.assert_called_once_with(2)
+
+    def test_batch_pacing_includes_url_and_host_cooldowns(self):
+        limited=HTTPError('https://cache.test/b',429,'limited',{'Retry-After':'7200'},BytesIO())
+        with patch('http_cache.time.time',return_value=1000),patch('http_cache.urlopen',side_effect=limited):
+            with self.assertRaises(CacheError):self.cache.get('https://cache.test/b')
+        urls=['https://cache.test/a','https://cache.test/b','https://other.test/c']
+        self.assertEqual(self.cache.not_before_many(urls),dict(zip(urls,[8200,8200,0])))
+        self.assertEqual(self.cache.not_before_many([]),{})
 
     def test_trending_cache_hit_does_not_invent_new_observation(self):
         source=dict(id='hf_models',name='Models',category='model',format='hf_models',url='https://huggingface.co/api/models')

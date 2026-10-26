@@ -16,6 +16,9 @@ PAGE = ('<html><nav><p>Navigation</p></nav><div class="entry-content wp-block-po
 
 
 class Articles(unittest.TestCase):
+    def setUp(self):
+        from db_test import use_schema;use_schema(self)
+
     def test_body_excludes_non_article_and_preserves_paragraphs(self):
         text = articles.parse_article(PAGE)
         self.assertIn('Read more',text)

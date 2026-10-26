@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Optional Telegram process; consumes the collector's snapshot without fetching sites."""
-import fcntl
+from contextlib import ExitStack
 import json
 import logging
 import os
@@ -9,6 +9,7 @@ import signal
 import threading
 import time
 import bot
+import db as pgdb
 from publication import Publications
 from service_state import ServiceState
 from signals import source_name
@@ -23,12 +24,11 @@ def main():
         if not os.getenv(key):raise SystemExit(f'Set {key} before enabling the telegram profile')
     stop=threading.Event()
     for sig in (signal.SIGINT,signal.SIGTERM):signal.signal(sig,lambda *_:stop.set())
-    state=ServiceState();publications=Publications();path=os.getenv('STATE_DB','data/state.sqlite3')
-    Path(path).parent.mkdir(parents=True,exist_ok=True)
-    with open(path+'.lock','a') as lock:
-        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    state=ServiceState();publications=Publications()
+    with ExitStack() as stack:
+        try:stack.enter_context(pgdb.advisory_lock('publisher:process',blocking=False))
         except BlockingIOError:raise SystemExit('Another Telegram publisher is running') from None
-        db=bot.database(path)
+        db=bot.database()
         while not stop.is_set():
             try:
                 state.heartbeat('publisher')

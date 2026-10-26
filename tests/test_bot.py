@@ -78,6 +78,7 @@ class Rules(unittest.TestCase):
 
 class Delivery(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.temp = tempfile.TemporaryDirectory()
         self.db = bot.database(self.temp.name + '/state.db')
         self.env = patch.dict('os.environ', TELEGRAM_BOT_TOKEN='test', TELEGRAM_CHAT_ID='test')
@@ -118,7 +119,7 @@ class Delivery(unittest.TestCase):
             third = post(id='third', url='https://github.com/org/new-tool', selftext='')
             bot.publish(self.db, [(third, bot.keys(third))], CFG)
             self.assertEqual(send.call_count, 1)
-            self.assertIsNotNone(self.db.execute('SELECT 1 FROM aliases WHERE key=?', ('reddit:third',)).fetchone())
+            self.assertIsNotNone(self.db.execute('SELECT 1 FROM aliases WHERE key=%s', ('reddit:third',)).fetchone())
 
     def test_fetch_weekend_uses_top_week(self):
         cfg = copy.deepcopy(CFG)
@@ -132,6 +133,9 @@ class Delivery(unittest.TestCase):
 
 
 class RSS(unittest.TestCase):
+    def setUp(self):
+        from db_test import use_schema;use_schema(self)
+
     def sample(self):
         return bot.parse_feed(Path('tests/fixtures/reddit.atom').read_bytes())[0]
 

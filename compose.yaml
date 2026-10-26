@@ -20,16 +20,43 @@ x-service: &service
     - ./config.json:/app/config.json:ro
   environment: &environment
     SIGNAL_PUBLIC_URL: ${SIGNAL_PUBLIC_URL:-http://127.0.0.1:8765}
-    HTTP_CACHE_DB: data/http-cache.sqlite3
-    SIGNAL_CONTROL_DB: data/service.sqlite3
+    PGHOST: postgres
+    PGPORT: 5432
+    PGDATABASE: ${POSTGRES_DB:-signal}
+    PGUSER: ${POSTGRES_USER:-signal}
+    PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    PGCONNECT_TIMEOUT: ${PGCONNECT_TIMEOUT:-10}
     DASHBOARD_HTML: data/dashboard.html
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-reddit-reposter/1.0}
 
 services:
+  postgres:
+    image: postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-signal}
+      POSTGRES_USER: ${POSTGRES_USER:-signal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - signal-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
   worker:
     <<: *service
     command: [python, collector.py]
+    depends_on:
+      postgres: {condition: service_healthy}
     environment:
       <<: *environment
       # Optional: a token without scopes raises the GitHub API limit from 60 to 5000 requests per hour.
@@ -52,6 +79,7 @@ services:
     command: [gunicorn, --config, gunicorn.conf.py, "production:create_app()"]
     depends_on:
       worker: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     environment:
       <<: *environment
       SIGNAL_ADMIN_TOKEN: ${SIGNAL_ADMIN_TOKEN:-}
@@ -74,11 +102,11 @@ services:
     command: [python, publisher.py]
     depends_on:
       worker: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     environment:
       <<: *environment
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      STATE_DB: data/state.sqlite3
     mem_limit: 256m
     cpus: 0.5
     healthcheck:
@@ -94,7 +122,9 @@ services:
     restart: "no"
     user: "0:0"
     cap_add: [CHOWN, DAC_OVERRIDE]
-    command: [python, ops.py, import-data, /import]
+    command: [python, ops.py, migrate-sqlite, /import]
+    depends_on:
+      postgres: {condition: service_healthy}
     volumes:
       - signal-data:/app/data
       - ./data:/import:ro
@@ -105,6 +135,8 @@ services:
     profiles: [ops]
     restart: "no"
     command: [python, ops.py, backup, /backups]
+    depends_on:
+      postgres: {condition: service_healthy}
     volumes:
       - signal-data:/app/data
       - ./config.json:/app/config.json:ro
@@ -113,4 +145,6 @@ services:
 volumes:
   signal-data:
     name: ${SIGNAL_DATA_VOLUME:-reddit-reposter_signal-data}
+  signal-postgres:
+    name: ${SIGNAL_POSTGRES_VOLUME:-reddit-reposter_signal-postgres}
   signal-backups:

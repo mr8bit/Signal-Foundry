@@ -30,6 +30,7 @@ class FakeHTTP:
 
 class Attention(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.tmp=tempfile.TemporaryDirectory();self.store=attention.Store(Path(self.tmp.name)/'a.sqlite3')
 
     def tearDown(self):self.tmp.cleanup()

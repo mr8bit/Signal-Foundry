@@ -7,18 +7,16 @@ reactions, Google News coverage of a headline and outlets' most-read lists.
 
 The collector writes readings; the dashboard build only reads them and never touches the network."""
 from collections import defaultdict
-from contextlib import contextmanager
 import html
 import json
 import logging
 import os
-from pathlib import Path
 import re
-import sqlite3
 import time
 from urllib.parse import quote, urljoin, urlsplit
 import xml.etree.ElementTree as ET
 import bot
+import db
 from http_cache import HTTPCache, CacheError
 
 LOG=logging.getLogger('attention')
@@ -61,61 +59,49 @@ def artifact_key(url):
 
 class Store:
     def __init__(self,path=None):
-        self.path=Path(path or os.getenv('ATTENTION_DB','data/attention.sqlite3'))
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        with self.connect() as db:
-            db.execute('PRAGMA journal_mode=WAL')
-            db.executescript('''CREATE TABLE IF NOT EXISTS readings (key TEXT NOT NULL, channel TEXT NOT NULL,
-                value REAL NOT NULL, observed_at REAL NOT NULL);
-                CREATE INDEX IF NOT EXISTS readings_key ON readings(key,channel,observed_at);
-                CREATE INDEX IF NOT EXISTS readings_time ON readings(observed_at);
-                CREATE TABLE IF NOT EXISTS checks (key TEXT NOT NULL, kind TEXT NOT NULL, checked_at REAL NOT NULL,
-                PRIMARY KEY(key,kind));''')
-
-    @contextmanager
-    def connect(self):
-        db=sqlite3.connect(self.path,timeout=30)
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        pass
 
     def record(self,rows,now=None):
         """Store readings; an unchanged value is written at most hourly so histories stay small."""
         now=time.time() if now is None else now
         rows=[(k,c,float(v)) for k,c,v in rows if k and isinstance(v,(int,float)) and not isinstance(v,bool) and v>=0]
         if not rows:return 0
-        written=0
-        with self.connect() as db:
+        with db.connect() as connection:
+            pairs=tuple({(key,channel) for key,channel,value in rows})
+            latest={}
+            keys=[key for key,channel in pairs];channels=[channel for key,channel in pairs]
+            for row in connection.execute('''SELECT DISTINCT ON (key,channel) key,channel,value,observed_at
+                    FROM readings WHERE (key,channel) IN (SELECT * FROM unnest(%s::text[],%s::text[]))
+                    ORDER BY key,channel,observed_at DESC''',(keys,channels)):
+                latest[(row['key'],row['channel'])]=(row['value'],row['observed_at'])
+            pending=[]
             for key,channel,value in rows:
-                last=db.execute('SELECT value,observed_at FROM readings WHERE key=? AND channel=? ORDER BY observed_at DESC LIMIT 1',
-                                (key,channel)).fetchone()
+                last=latest.get((key,channel))
                 if last and last[0]==value and now-last[1]<3600:continue
-                db.execute('INSERT INTO readings VALUES (?,?,?,?)',(key,channel,value,now));written+=1
-            db.execute('DELETE FROM readings WHERE observed_at<?',(now-KEEP_SECONDS,))
-        return written
+                pending.append((key,channel,value,now));latest[(key,channel)]=(value,now)
+            connection.cursor().executemany('INSERT INTO readings (key,channel,value,observed_at) VALUES (%s,%s,%s,%s)',pending)
+            connection.execute('DELETE FROM readings WHERE observed_at<%s',(now-KEEP_SECONDS,))
+        return len(pending)
 
     def due(self,key,kind,ttl,now):
-        with self.connect() as db:
-            row=db.execute('SELECT checked_at FROM checks WHERE key=? AND kind=?',(key,kind)).fetchone()
-        return not row or now-row[0]>=ttl
+        with db.connect() as connection:
+            row=connection.execute('SELECT checked_at FROM checks WHERE key=%s AND kind=%s',(key,kind)).fetchone()
+        return not row or now-row['checked_at']>=ttl
 
     def checked(self,key,kind,now):
-        with self.connect() as db:
-            db.execute('INSERT INTO checks VALUES (?,?,?) ON CONFLICT(key,kind) DO UPDATE SET checked_at=excluded.checked_at',(key,kind,now))
+        with db.connect() as connection:
+            connection.execute('''INSERT INTO checks (key,kind,checked_at) VALUES (%s,%s,%s)
+                ON CONFLICT (key,kind) DO UPDATE SET checked_at=EXCLUDED.checked_at''',(key,kind,now))
 
     def snapshot(self,now=None,window=7*DAY):
         """{key: {channel: value}} with the latest value per channel and growth per day for totals."""
         now=time.time() if now is None else now
         history=defaultdict(list)
-        with self.connect() as db:
-            for key,channel,value,stamp in db.execute('SELECT key,channel,value,observed_at FROM readings WHERE observed_at>=? ORDER BY observed_at',
-                                                      (now-max(window,GROWTH_LOOKBACK),)):
-                history[(key,channel)].append((stamp,value))
+        with db.connect() as connection:
+            rows=connection.execute('SELECT key,channel,value,observed_at FROM readings WHERE observed_at>=%s ORDER BY observed_at',
+                                    (now-max(window,GROWTH_LOOKBACK),))
+            for row in rows:
+                history[(row['key'],row['channel'])].append((row['observed_at'],row['value']))
         result=defaultdict(dict)
         for (key,channel),points in history.items():
             stamp,value=points[-1]
@@ -129,9 +115,8 @@ class Store:
 
 
 def load(now=None):
-    """Readings for a build: empty until the collector has created the store, so builds never create it."""
-    path=Path(os.getenv('ATTENTION_DB','data/attention.sqlite3'))
-    return Store(path).snapshot(now) if path.exists() else {}
+    """Readings for a build."""
+    return Store().snapshot(now)
 
 
 def passive(posts):

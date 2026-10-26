@@ -1,6 +1,7 @@
 """Explainable editorial ranking. No inferred popularity or growth metrics."""
 from bisect import bisect_left,bisect_right
 from collections import Counter,defaultdict
+from functools import lru_cache
 from hashlib import sha256
 import math
 import re
@@ -37,22 +38,26 @@ SERIES_POINTS=12
 SERIES_WINDOW=7*86400
 
 
-def enterprise_matches(p):
-    """{label: 'title'|'case'|'body'} for every rule the post satisfies."""
-    title=p['title']
-    # A bounded source excerpt avoids boilerplate at the end of full articles.
-    body=(p.get('article_text') or p.get('selftext',''))[:1200]
+@lru_cache(maxsize=65536)
+def _enterprise_matches(title,body,category):
     found={}
     for label,kind,pattern in ENTERPRISE_RULES:
         if kind=='case':
-            if p.get('category') in ('lab','news') and re.search(pattern,title,re.I): found[label]='case'
+            if category in ('lab','news') and re.search(pattern,title,re.I): found[label]='case'
         elif re.search(pattern,title,re.I): found[label]='title'
         # Feeds often repeat a (truncated) teaser before the full text: a mention is identified by its sentence
         # up to the match, so the copy is not counted twice.
         elif len({body[max(body.rfind('.',0,m.start()),body.rfind('\n',0,m.start()))+1:m.end()].strip().casefold()
                   for m in re.finditer(pattern,body,re.I)})>=(1 if kind=='strong' else 2):
             found[label]='body'
-    return found
+    return tuple(found.items())
+
+
+def enterprise_matches(p):
+    """{label: 'title'|'case'|'body'} for every rule the post satisfies."""
+    # A bounded source excerpt avoids boilerplate at the end of full articles.
+    body=(p.get('article_text') or p.get('selftext',''))[:1200]
+    return dict(_enterprise_matches(p['title'],body,p.get('category')))
 
 
 def enterprise_reasons(p):
@@ -220,18 +225,22 @@ def popularity(p,baseline=None):
     return min(10,10*math.log1p(value)/math.log1p(TARGETS[kind])),True,f'{value} {label}; short history, saturation target {TARGETS[kind]}'
 
 
+@lru_cache(maxsize=65536)
+def _reference_time(created,date_kind,seen,content_kind,original):
+    if date_kind!='trend':
+        if created%86400==0 and seen is not None and 0<=seen-created<86400:created=seen
+        return created,'update' if date_kind=='updated' else 'publication'
+    if content_kind in HALF_LIFE and original:
+        return original,'paper published' if content_kind=='paper' else 'model created'
+    return seen,'first seen trending'
+
+
 def reference_time(p):
     """When the story became news: publication for models/papers, first sighting for trending repositories.
     Some feeds give only a day (Anthropic, the Hugging Face blog, parts of OpenAI and Vercel), which parses as
     midnight UTC; first seen the same day, the post is dated by that sighting, not up to a day too old."""
-    if p.get('date_kind')!='trend':
-        created=p['created_utc']
-        seen=p.get('first_seen')
-        if created%86400==0 and seen is not None and 0<=seen-created<86400:created=seen
-        return created,'update' if p.get('date_kind')=='updated' else 'publication'
-    if p.get('content_kind') in HALF_LIFE and p.get('original_published_at'):
-        return p['original_published_at'],'paper published' if p['content_kind']=='paper' else 'model created'
-    return p.get('first_seen',p['created_utc']),'first seen trending'
+    return _reference_time(p['created_utc'],p.get('date_kind'),p.get('first_seen',p['created_utc']),
+                           p.get('content_kind'),p.get('original_published_at'))
 
 
 # A headline announcing a model: a release verb with a tracked model or a model word ("Microsoft reveals MAI-Base-2
@@ -639,25 +648,33 @@ SOURCE_ORDER={'lab':0,'cloud':0,'news':1,'newsletter':2}
 DIGEST=re.compile(r';|^\[ainews\]|^import ai \d+|\b(?:weekly|roundup|recap|newsletter)\b',re.I)
 
 
+@lru_cache(maxsize=65536)
+def _title_words(title):
+    return tuple(w.strip('.') for w in re.split(r'[^\w.]+',title.casefold()) if w.strip('.'))
+
+
 def title_words(p):
-    return [w.strip('.') for w in re.split(r'[^\w.]+',p['title'].casefold()) if w.strip('.')]
+    return _title_words(p['title'])
 
 
+@lru_cache(maxsize=65536)
 def is_version(w):
     return bool(re.search(r'\d',w)) and ('.' in w or bool(re.search(r'[a-z]',w))) and not SIZE.fullmatch(w) and not re.fullmatch(r'(?:19|20)\d\d',w)
 
 
+@lru_cache(maxsize=65536)
 def merge_tokens(words):
     """Versions, long numbers (1017) and 5-letter stems; sizes, years and short numbers are too common to identify a story."""
-    return {w if re.search(r'\d',w) else w[:5] for w in words
+    return frozenset(w if re.search(r'\d',w) else w[:5] for w in words
             if is_version(w) or re.fullmatch(r'\d{4,}',w) and not re.fullmatch(r'(?:19|20)\d\d',w)
-            or len(w)>=4 and w not in STOP and not re.search(r'\d',w)}
+            or len(w)>=4 and w not in STOP and not re.search(r'\d',w))
 
 
+@lru_cache(maxsize=65536)
 def qualifiers(words,anchor):
     """Name words within two positions of a version token: "nemotron 3.5 super vl" -> {nemotron, super, vl}."""
-    return {x for i,w in enumerate(words) if w==anchor for x in words[max(0,i-2):i+3]
-            if x!=anchor and x not in GENERIC and len(x)>1 and not re.search(r'\d',x)}
+    return frozenset(x for i,w in enumerate(words) if w==anchor for x in words[max(0,i-2):i+3]
+            if x!=anchor and x not in GENERIC and len(x)>1 and not re.search(r'\d',x))
 
 
 def similar_articles(a,b):
@@ -674,9 +691,14 @@ def similar_articles(a,b):
     return len(shared)>=4 and jaccard>=0.4
 
 
+@lru_cache(maxsize=65536)
+def _name_words(title):
+    return _title_words(re.sub(r'^[\w.-]+/','',title.strip()))
+
+
 def name_words(p):
     """Title words without a model's or repository's owner namespace ("unsloth/DeepSeek-V4.1" -> deepseek, v4.1)."""
-    return title_words(dict(p,title=re.sub(r'^[\w.-]+/','',p['title'].strip())))
+    return _name_words(p['title'])
 
 
 def product_words(artifacts):
@@ -717,13 +739,15 @@ def merge_similar(stories,index=None):
     threshold with a few members still come together. Stories are visited in publication order: the first report
     anchors. Articles match by title (similar_articles) or, across outlets, as a retold story (StoryIndex)."""
     index=index or StoryIndex([s[0] for s in stories if not s[0].get('content_kind')])
+    times=[reference_time(s[0])[0] for s in stories]
     def link(p,q):
         # "Nemotron 3.5 Bolt" and "Nemotron 3.5 Super VL" news never share a card, even through a family roundup.
         if variants(p,q):return 0
         if similar_articles(p,q) or publisher(p)!=publisher(q) and index.same_story(p,q,merge=True):return 2
         return 1 if publisher(p)!=publisher(q) and index.same_story(p,q,merge=False) else 0
-    def joins(p,cluster):
-        if any(abs(reference_time(p)[0]-reference_time(stories[j][0])[0])>MERGE_WINDOW for j in cluster):return False
+    def joins(i,cluster):
+        p=stories[i][0]
+        if any(abs(times[i]-times[j])>MERGE_WINDOW for j in cluster):return False
         links=[link(p,stories[j][0]) for j in cluster]
         return all(links) and 2*links.count(2)>=len(cluster)
     order=sorted(range(len(stories)),key=lambda i:stories[i][0]['created_utc'])
@@ -732,7 +756,8 @@ def merge_similar(stories,index=None):
         p=stories[i][0]
         target=None
         if not p.get('content_kind'):
-            target=next((c for c in clusters if not stories[c[0]][0].get('content_kind') and joins(p,c)),None)
+            target=next((c for c in clusters if not stories[c[0]][0].get('content_kind')
+                         and abs(times[i]-times[c[0]])<=MERGE_WINDOW and joins(i,c)),None)
         if target is None:clusters.append([i])
         else:target.append(i)
     return clusters

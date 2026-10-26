@@ -24,6 +24,9 @@ def post(**changes):
 
 
 class Signals(unittest.TestCase):
+    def setUp(self):
+        from db_test import use_schema;use_schema(self)
+
     def test_enterprise_classification_requires_explicit_business_signals(self):
         for title in ('New enterprise AI agents','LLM API adds SSO and RBAC','On-prem model deployment',
                       'Amazon Bedrock launches new agents','Корпоративная платформа AI для компаний'):
@@ -514,6 +517,15 @@ class Signals(unittest.TestCase):
                      source_id='hf_models',article_url=f'https://huggingface.co/bfl/flux-klein{x}',selftext='',links=[]) for i,x in enumerate(('','-comfy'))]
         self.assertEqual(len(signals.merge_similar([(p,[p],{}) for p in models])),2)
 
+    def test_merge_skips_expired_clusters_and_preserves_window_boundary(self):
+        old=post(id='old',created_utc=NOW-signals.MERGE_WINDOW-1)
+        new=post(id='new',created_utc=NOW)
+        stories=[(p,[p],{}) for p in (old,new)]
+        with patch('signals.similar_articles',side_effect=AssertionError('Expired cluster was compared')):
+            self.assertEqual(signals.merge_similar(stories),[[0],[1]])
+        edge=post(id='edge',created_utc=NOW-signals.MERGE_WINDOW)
+        self.assertEqual(signals.merge_similar([(p,[p],{}) for p in (edge,new)]),[[0,1]])
+
     def test_groups_preserve_sources_and_exclude_removed_sources(self):
         p=post();q=post(id='two',source_id='openai',source_name='OpenAI News',category='lab',article_url='https://openai.com/news/example')
         removed=post(id='habr',source_id='habr',links=[],article_url='https://habr.com/test')
@@ -529,10 +541,15 @@ class Signals(unittest.TestCase):
             with patch('dashboard.time.time',return_value=NOW):dashboard.archive_posts([post()],path)
             with patch('dashboard.time.time',return_value=NOW+3600):rows=dashboard.archive_posts([post(selftext='Updated')],path)
             self.assertEqual(len(rows),1);self.assertEqual(rows[0]['selftext'],'Updated')
-            import sqlite3
-            with sqlite3.connect(path) as db:
-                first,last=db.execute('SELECT first_seen,last_seen FROM news').fetchone()
-            self.assertEqual(first,NOW);self.assertEqual(last,NOW+3600)
+            import db
+            with db.connect() as conn:
+                row=conn.execute('SELECT first_seen,last_seen FROM news').fetchone()
+            self.assertEqual(row['first_seen'],NOW);self.assertEqual(row['last_seen'],NOW+3600)
+
+    def test_archive_upsert_preserves_insertion_order(self):
+        first=post();second=post(id='two',article_url='https://example.com/two')
+        dashboard.archive_posts([first]);dashboard.archive_posts([second]);rows=dashboard.archive_posts([dict(first,selftext='Updated')])
+        self.assertEqual([row['id'] for row in rows],['one','two'])
 
     def test_rss_is_valid_escaped_and_has_stable_guid_without_fake_metrics(self):
         item=signals.build_items([post(title='Qwen release <script>& benchmark')],CFG,NOW)[0]

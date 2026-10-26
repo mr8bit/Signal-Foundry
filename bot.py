@@ -2,8 +2,8 @@
 """Reddit top listings → rule-based selection → Telegram. Python 3.11+."""
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
-import fcntl
 import html
 from html.parser import HTMLParser
 import json
@@ -11,7 +11,6 @@ import logging
 import os
 from pathlib import Path
 import re
-import sqlite3
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -19,6 +18,8 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
+import psycopg
+import db as pgdb
 from sources import article_url, parse_site_feed, parse_newsroom
 from articles import ArticleFetcher
 from trends import parse_trends
@@ -311,7 +312,7 @@ class RedditRSS:
     def source_failure(self,name,url,error):
         row=self.http.read(url) or {}
         with self.http.connect() as db:
-            host=db.execute('SELECT * FROM hosts WHERE host=?',((urlsplit(url).hostname or '').lower(),)).fetchone()
+            host=db.execute('SELECT * FROM hosts WHERE host=%s',((urlsplit(url).hostname or '').lower(),)).fetchone()
         return dict(name=name,url=url,status='error',error=str(error),count=0,
                     http_status=row.get('status') or (host['status'] if host else None),
                     retry_at=max(row.get('retry_at',0),host['retry_at'] if host else 0))
@@ -436,13 +437,18 @@ def render(p):
             where+f'\n\n{html.escape(credit)}')
 
 
-def database(path):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path)
-    db.executescript('''CREATE TABLE IF NOT EXISTS deliveries (
-        id INTEGER PRIMARY KEY, status TEXT NOT NULL, created REAL NOT NULL, message_id INTEGER);
-        CREATE TABLE IF NOT EXISTS aliases (key TEXT PRIMARY KEY, delivery INTEGER NOT NULL);''')
-    return db
+def database(path=None):
+    pgdb.init_schema()
+    return pgdb.raw_connect()
+
+
+@contextmanager
+def transaction(db):
+    try:yield
+    except Exception:
+        db.rollback()
+        raise
+    else:db.commit()
 
 
 def publish(db, groups, cfg):
@@ -450,27 +456,27 @@ def publish(db, groups, cfg):
         raise RuntimeError('Uncertain pending delivery. Reconcile it with Telegram before retrying; see README.')
     sent = 0
     for p, ks in groups:
-        existing = [row[0] for k in ks
-                    if (row := db.execute('SELECT delivery FROM aliases WHERE key=?', (k,)).fetchone())]
+        existing = [row['delivery'] for k in ks
+                    if (row := db.execute('SELECT delivery FROM aliases WHERE key=%s', (k,)).fetchone())]
         if existing:
-            with db:
-                db.executemany('INSERT OR IGNORE INTO aliases VALUES (?,?)', [(k, existing[0]) for k in ks])
+            with transaction(db):
+                db.cursor().executemany('INSERT INTO aliases(key,delivery) VALUES (%s,%s) ON CONFLICT(key) DO NOTHING', [(k, existing[0]) for k in ks])
             continue
-        last = db.execute("SELECT MAX(created) FROM deliveries WHERE status='sent'").fetchone()[0]
+        last = db.execute("SELECT MAX(created) AS created FROM deliveries WHERE status='sent'").fetchone()['created']
         if last and time.time() - last < cfg['min_publish_seconds']:
             break
         # Durable intent prevents automatic duplicates after an ambiguous HTTP timeout.
-        with db:
-            delivery = db.execute("INSERT INTO deliveries(status,created) VALUES ('pending',?)", (time.time(),)).lastrowid
-            db.executemany('INSERT INTO aliases VALUES (?,?)', [(k, delivery) for k in ks])
+        with transaction(db):
+            delivery = db.execute("INSERT INTO deliveries(status,created) VALUES ('pending',%s) RETURNING id", (time.time(),)).fetchone()['id']
+            db.cursor().executemany('INSERT INTO aliases(key,delivery) VALUES (%s,%s)', [(k, delivery) for k in ks])
         result = request_json('https://api.telegram.org/bot' + os.environ['TELEGRAM_BOT_TOKEN'] + '/sendMessage',
                               json.dumps({'chat_id': os.environ['TELEGRAM_CHAT_ID'], 'text': render(p),
                                           'parse_mode': 'HTML', 'link_preview_options': {'is_disabled': True}}).encode(),
                               {'Content-Type': 'application/json'})
         if not result.get('ok'):
             raise RuntimeError('Telegram rejected delivery; pending intent retained for inspection')
-        with db:
-            db.execute("UPDATE deliveries SET status='sent',message_id=?,created=? WHERE id=?",
+        with transaction(db):
+            db.execute("UPDATE deliveries SET status='sent',message_id=%s,created=%s WHERE id=%s",
                        (result['result']['message_id'], time.time(), delivery))
         sent += 1
         LOG.info('Published post %s', p['id'])
@@ -507,14 +513,12 @@ def main():
         for key in ('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'):
             if not os.environ.get(key):
                 parser.error(f'Set {key} in .env')
-        path = os.getenv('STATE_DB', 'data/state.sqlite3')
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        lock = open(path + '.lock', 'w')
+        lock = pgdb.advisory_lock('publisher:process', blocking=False)
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock.__enter__()
         except BlockingIOError:
             parser.error('Another publisher is already running')
-        db = database(path)
+        db = database()
     while True:
         delay = cfg['poll_seconds']
         try:
@@ -535,13 +539,15 @@ def main():
             if args.once or args.fixture:
                 raise SystemExit(1) from None
             delay = max(delay, exc.seconds)
-        except (RuntimeError, KeyError, ValueError, sqlite3.Error) as exc:
+        except (RuntimeError, KeyError, ValueError, psycopg.Error) as exc:
             LOG.error('%s', exc)
             if args.once or args.fixture:
                 raise SystemExit(1) from None
         if args.once or args.fixture:
             break
         time.sleep(delay)
+    if lock is not None:
+        lock.__exit__(None, None, None)
 
 
 if __name__ == '__main__':

@@ -147,6 +147,7 @@ def request(app,path,accept=None):
 
 class AgentRoutes(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.temp=tempfile.TemporaryDirectory();root=Path(self.temp.name)
         publications=Publications(root/'published');publications.publish(data())
         self.app=SignalApp(ServiceState(root/'service.sqlite3'),publications,admin_token='x',public_url='https://signal.example')

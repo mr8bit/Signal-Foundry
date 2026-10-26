@@ -73,7 +73,7 @@ def parse_article(data):
 class ArticleFetcher:
     def __init__(self, cache_dir='data/articles', ttl=None, http_cache=None):
         self.cache_dir = Path(cache_dir)
-        self.http=http_cache or HTTPCache(None if str(cache_dir)=='data/articles' else self.cache_dir/'http-cache.sqlite3')
+        self.http=http_cache or HTTPCache()
         self.ttl=ttl if ttl is not None else self.http.policy['article_ttl_seconds']
 
     def get(self, url, user_agent):

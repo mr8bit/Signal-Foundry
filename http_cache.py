@@ -1,22 +1,17 @@
 """Shared application cache for public GETs, persistent backoff and host pacing."""
-from contextlib import contextmanager
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-import fcntl
-from hashlib import sha256
 from http.client import HTTPException
 import math
-import os
-from pathlib import Path
 import re
 import random
 import socket
-import sqlite3
 import ssl
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+import db
 
 DEFAULT_POLICY=dict(rss_ttl_seconds=900,html_ttl_seconds=1800,github_trending_ttl_seconds=1800,
                     hf_models_ttl_seconds=1800,hf_papers_ttl_seconds=3600,article_ttl_seconds=21600,
@@ -62,25 +57,9 @@ class CachedResponse:
 
 class HTTPCache:
     def __init__(self,path=None,policy=None):
-        self.path=Path(path or os.getenv('HTTP_CACHE_DB','data/http-cache.sqlite3'))
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.lock_dir=Path(str(self.path)+'.locks');self.lock_dir.mkdir(exist_ok=True)
         self.policy=dict(DEFAULT_POLICY)
         self.configure(policy or {})
         self.last_result=None
-        with self.connect() as db:
-            db.execute('PRAGMA journal_mode=WAL')
-            db.executescript('''CREATE TABLE IF NOT EXISTS responses (
-                url TEXT PRIMARY KEY, body BLOB, response_url TEXT, etag TEXT, modified TEXT,
-                validated_at REAL NOT NULL DEFAULT 0, expires_at REAL NOT NULL DEFAULT 0,
-                retry_at REAL NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', status INTEGER);
-                CREATE TABLE IF NOT EXISTS hosts (
-                host TEXT PRIMARY KEY, next_at REAL NOT NULL DEFAULT 0,
-                retry_at REAL NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', status INTEGER);''')
-            db.execute('BEGIN IMMEDIATE')
-            for table,column in [('responses','failures'),('hosts','rate_failures')]:
-                if column not in {row['name'] for row in db.execute('PRAGMA table_info('+table+')')}:
-                    db.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
 
     def configure(self,policy):
         for key,value in policy.items():
@@ -97,37 +76,35 @@ class HTTPCache:
             if key=='backoff_jitter_ratio' and value>1:raise ValueError('Backoff jitter must not exceed 1')
         self.policy.update(policy)
 
-    @contextmanager
     def connect(self):
-        db=sqlite3.connect(self.path,timeout=30)
-        db.row_factory=sqlite3.Row
-        try:
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return db.connect()
 
-    @contextmanager
     def locked(self,key):
-        with (self.lock_dir/(sha256(key.encode()).hexdigest()+'.lock')).open('a') as lock:
-            fcntl.flock(lock,fcntl.LOCK_EX)
-            try:yield
-            finally:fcntl.flock(lock,fcntl.LOCK_UN)
+        return db.advisory_lock(key)
 
     def read(self,url):
         with self.connect() as db:
-            row=db.execute('SELECT * FROM responses WHERE url=?',(url,)).fetchone()
+            row=db.execute('SELECT * FROM responses WHERE url=%s',(url,)).fetchone()
         return dict(row) if row else None
 
-    def not_before(self,url):
-        host=(urlsplit(url).hostname or '').lower()
+    def not_before_many(self,urls):
+        urls=list(dict.fromkeys(urls));result={url:0 for url in urls}
+        if not urls:return result
+        host_urls={}
+        for url in urls:
+            host=(urlsplit(url).hostname or '').lower();host_urls.setdefault(host,[]).append(url)
         with self.connect() as db:
-            row=db.execute('SELECT retry_at FROM responses WHERE url=?',(url,)).fetchone()
-            record=db.execute('SELECT next_at,retry_at FROM hosts WHERE host=?',(host,)).fetchone()
-        return max(row['retry_at'] if row else 0,record['next_at'] if record else 0,record['retry_at'] if record else 0)
+            placeholders=','.join(['%s']*len(urls))
+            for row in db.execute(f'SELECT url,retry_at FROM responses WHERE url IN ({placeholders})',urls):
+                result[row['url']]=row['retry_at']
+            hosts=list(host_urls);placeholders=','.join(['%s']*len(hosts))
+            for row in db.execute(f'SELECT host,next_at,retry_at FROM hosts WHERE host IN ({placeholders})',hosts):
+                for url in host_urls[row['host']]:
+                    result[url]=max(result[url],row['next_at'],row['retry_at'])
+        return result
+
+    def not_before(self,url):
+        return self.not_before_many([url])[url]
 
     def host_interval(self,host):
         # The most specific listed domain sets its own pause, so an API host can be paced faster than feeds.
@@ -136,7 +113,7 @@ class HTTPCache:
         return max(matches)[1] if matches else self.policy['min_host_interval_seconds']
 
     def reset_failures(self,db,host):
-        db.execute("UPDATE hosts SET rate_failures=0,retry_at=0,error='',status=200 WHERE host=?",(host,))
+        db.execute("UPDATE hosts SET rate_failures=0,retry_at=0,error='',status=200 WHERE host=%s",(host,))
 
     def result(self,row,state,error=''):
         response=CachedResponse(bytes(row['body']),row['response_url'] or row['url'],row['validated_at'],row['expires_at'],state,error)
@@ -154,20 +131,20 @@ class HTTPCache:
             failures=(row or {}).get('failures',0)+1
             count=failures
             if host and status==429:
-                record=db.execute('SELECT rate_failures FROM hosts WHERE host=?',(host,)).fetchone()
+                record=db.execute('SELECT rate_failures FROM hosts WHERE host=%s',(host,)).fetchone()
                 count=(record['rate_failures'] if record else 0)+1
             base=self.policy['rate_limit_backoff_seconds'] if status==429 else self.policy['error_backoff_seconds']
             delay=min(self.policy['max_backoff_seconds'],base*2**min(count-1,16)*(1+random.uniform(0,self.policy['backoff_jitter_ratio'])))
             retry_at=time.time()+max(seconds,delay)
-            db.execute('INSERT INTO responses(url,retry_at,error,status) VALUES (?,?,?,?) '
+            db.execute('INSERT INTO responses(url,retry_at,error,status) VALUES (%s,%s,%s,%s) '
                        'ON CONFLICT(url) DO UPDATE SET retry_at=excluded.retry_at,error=excluded.error,status=excluded.status',
                        (url,retry_at,message,status))
-            db.execute('UPDATE responses SET failures=? WHERE url=?',(failures,url))
+            db.execute('UPDATE responses SET failures=%s WHERE url=%s',(failures,url))
             if host and status in (403,429,503):
-                db.execute('INSERT INTO hosts(host,retry_at,error,status) VALUES (?,?,?,?) '
-                           'ON CONFLICT(host) DO UPDATE SET retry_at=MAX(hosts.retry_at,excluded.retry_at),error=excluded.error,status=excluded.status',
+                db.execute('INSERT INTO hosts(host,retry_at,error,status) VALUES (%s,%s,%s,%s) '
+                           'ON CONFLICT(host) DO UPDATE SET retry_at=GREATEST(hosts.retry_at,excluded.retry_at),error=excluded.error,status=excluded.status',
                            (host,retry_at,message,status))
-                if status==429:db.execute('UPDATE hosts SET rate_failures=? WHERE host=?',(count,host))
+                if status==429:db.execute('UPDATE hosts SET rate_failures=%s WHERE host=%s',(count,host))
         return self.fallback(row,message,retry_at,status)
 
     def get(self,url,headers=None,ttl=None,timeout=40,max_bytes=5_000_000,validator=None,loader=None,allowed_hosts=None):
@@ -190,7 +167,7 @@ class HTTPCache:
                 return self.fallback(row,row['error'] or 'Source retry is cooling down',row['retry_at'],row['status'])
             with self.locked('host:'+host):
                 with self.connect() as db:
-                    record=db.execute('SELECT * FROM hosts WHERE host=?',(host,)).fetchone()
+                    record=db.execute('SELECT * FROM hosts WHERE host=%s',(host,)).fetchone()
                 if record:
                     if record['retry_at']>time.time():
                         return self.fallback(row,record['error'] or 'Host retry is cooling down',record['retry_at'],record['status'])
@@ -222,7 +199,7 @@ class HTTPCache:
                     checked=time.time()
                     with self.connect() as db:
                         db.execute('''INSERT INTO responses(url,body,response_url,etag,modified,validated_at,expires_at,retry_at,error,status)
-                            VALUES (?,?,?,?,?,?,?,0,'',200) ON CONFLICT(url) DO UPDATE SET body=excluded.body,response_url=excluded.response_url,
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,0,'',200) ON CONFLICT(url) DO UPDATE SET body=excluded.body,response_url=excluded.response_url,
                             etag=excluded.etag,modified=excluded.modified,validated_at=excluded.validated_at,expires_at=excluded.expires_at,retry_at=0,error='',status=200,failures=0''',
                             (url,body,final_url,etag,modified,checked,checked+ttl))
                         self.reset_failures(db,host)
@@ -231,7 +208,7 @@ class HTTPCache:
                     if exc.code==304 and row and row['body'] is not None:
                         checked=time.time()
                         with self.connect() as db:
-                            db.execute("UPDATE responses SET validated_at=?,expires_at=?,retry_at=0,error='',status=304,failures=0 WHERE url=?",(checked,checked+ttl,url))
+                            db.execute("UPDATE responses SET validated_at=%s,expires_at=%s,retry_at=0,error='',status=304,failures=0 WHERE url=%s",(checked,checked+ttl,url))
                             self.reset_failures(db,host)
                         return self.result(self.read(url),'revalidated')
                     seconds=self.policy['error_backoff_seconds']
@@ -248,5 +225,5 @@ class HTTPCache:
                 finally:
                     # Count failed requests too. Preserve any 429 host cooldown.
                     with self.connect() as db:
-                        db.execute('INSERT INTO hosts(host,next_at) VALUES (?,?) ON CONFLICT(host) DO UPDATE SET next_at=excluded.next_at',
+                        db.execute('INSERT INTO hosts(host,next_at) VALUES (%s,%s) ON CONFLICT(host) DO UPDATE SET next_at=excluded.next_at',
                                    (host,time.time()+self.host_interval(host)))

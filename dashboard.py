@@ -5,7 +5,6 @@ import json
 import logging
 import re
 from pathlib import Path
-import sqlite3
 import time
 import os
 import tempfile
@@ -13,6 +12,7 @@ from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 from email.utils import formatdate
 import bot
+import db
 from cloud_news import prepare_cloud_posts
 import attention
 import embeddings
@@ -34,18 +34,16 @@ def record_telemetry(section,values):
 PERIODS={'now':48,'day':24,'week':168,'month':720,'year':8760}
 
 
-def archive_posts(posts,path='data/news.sqlite3'):
-    Path(path).parent.mkdir(parents=True,exist_ok=True)
-    with sqlite3.connect(path) as db:
-        db.execute('CREATE TABLE IF NOT EXISTS news (key TEXT PRIMARY KEY, payload TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL)')
+def archive_posts(posts,path=None):
+    with db.connect() as connection:
         now=time.time()
         for p in posts:
             key=(p.get('source_id') or 'reddit:'+p.get('subreddit',''))+':'+p['id']
-            db.execute('INSERT INTO news VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen',
-                       (key,json.dumps(p,ensure_ascii=False),now,now))
-        db.execute('DELETE FROM news WHERE last_seen < ?',(now-366*86400,))
+            connection.execute('INSERT INTO news(key,payload,first_seen,last_seen) VALUES (%s,%s,%s,%s) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen',
+                               (key,json.dumps(p,ensure_ascii=False),now,now))
+        connection.execute('DELETE FROM news WHERE last_seen < %s',(now-366*86400,))
         # first_seen gives trending repositories (no creation date) an honest freshness reference.
-        return [json.loads(payload)|{'first_seen':first} for payload,first in db.execute('SELECT payload,first_seen FROM news')]
+        return [json.loads(row['payload'])|{'first_seen':row['first_seen']} for row in connection.execute('SELECT payload,first_seen FROM news ORDER BY position')]
 
 
 def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):

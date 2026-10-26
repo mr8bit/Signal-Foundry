@@ -25,6 +25,7 @@ class Response:
 
 class Scheduling(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.before=Path.cwd();self.temp=tempfile.TemporaryDirectory();os.chdir(self.temp.name)
         self.clock=10000
         self.clock_patch=patch('source_schedule.time.time',side_effect=lambda:self.clock);self.clock_patch.start()

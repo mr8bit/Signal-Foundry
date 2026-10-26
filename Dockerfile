@@ -5,6 +5,8 @@ LABEL org.opencontainers.image.title="Signal" \
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONFAULTHANDLER=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 DASHBOARD_HTML=data/dashboard.html
 COPY requirements.txt ./
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
     && groupadd --gid 10001 signal \
     && useradd --uid 10001 --gid signal --no-create-home signal \

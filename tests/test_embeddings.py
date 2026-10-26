@@ -17,6 +17,7 @@ def story(id,title,hours=1,**changes):
 
 class Store(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.dir=tempfile.TemporaryDirectory();self.store=embeddings.Store(Path(self.dir.name)/'vectors.sqlite3')
         self.calls=[]
 

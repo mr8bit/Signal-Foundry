@@ -42,6 +42,7 @@ def request(app,path='/',method='GET',token=None,origin=None,etag=None):
 
 class Production(unittest.TestCase):
     def setUp(self):
+        from db_test import use_schema;use_schema(self)
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.state=ServiceState(self.root/'service.sqlite3');self.publications=Publications(self.root/'published')
         self.payload=data();self.publications.publish(self.payload)
@@ -125,20 +126,24 @@ def isolated_workspace():
 
 
 class Recovery(unittest.TestCase):
-    def test_live_backup_includes_committed_uncheckpointed_wal(self):
+    def setUp(self):
+        from db_test import use_schema;use_schema(self)
+
+    def test_sqlite_migration_preserves_news(self):
+        import db
         with tempfile.TemporaryDirectory() as directory:
-            source=Path(directory)/'live.sqlite3';target=Path(directory)/'backup.sqlite3'
-            with sqlite3.connect(source) as db:
-                db.execute('PRAGMA journal_mode=WAL')
-                db.execute('CREATE TABLE records (value TEXT)')
-                db.execute("INSERT INTO records VALUES ('committed')");db.commit()
-                self.assertGreater(Path(str(source)+'-wal').stat().st_size,0)
-                ops.copy_database(source,target)
-                with sqlite3.connect(target) as restored:
-                    self.assertEqual(restored.execute('SELECT value FROM records').fetchone()[0],'committed')
-                    self.assertEqual(restored.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+            source=Path(directory)
+            with sqlite3.connect(source/'news.sqlite3') as conn:
+                conn.execute('CREATE TABLE news (key TEXT PRIMARY KEY,payload TEXT NOT NULL,first_seen REAL NOT NULL,last_seen REAL NOT NULL)')
+                conn.execute('INSERT INTO news VALUES (?,?,?,?)',('one','{"id":"one"}',123,456))
+            with patch('builtins.print'):ops.migrate_sqlite(source)
+            with db.connect() as conn:
+                row=conn.execute('SELECT * FROM news WHERE key=%s',('one',)).fetchone()
+                self.assertEqual((row['payload'],row['first_seen'],row['last_seen']),('{"id":"one"}',123,456))
 
     def test_collection_success_and_backup_restore_keep_archive_and_first_seen(self):
+        import db
+        from psycopg.sql import SQL,Identifier
         with isolated_workspace() as root:
             state=ServiceState();pub=Publications()
             post=dict(id='one',source='site',source_id='techcrunch',source_name='TechCrunch AI',category='news',
@@ -152,14 +157,17 @@ class Recovery(unittest.TestCase):
             collector=Collector(state,pub,client);state.enqueue();job=state.claim()
             with patch('source_schedule.random.uniform',return_value=0):self.assertTrue(collector.collect(job))
             self.assertEqual(pub.load()['data']['scoring_version'],SCORING_VERSION)
-            with sqlite3.connect('data/news.sqlite3') as db:first=db.execute('SELECT first_seen FROM news').fetchone()[0]
+            with db.connect() as conn:first=conn.execute('SELECT first_seen FROM news').fetchone()['first_seen']
             snapshots=Path('data/feed-snapshot.json').stat().st_mtime
             with patch('builtins.print'):ops.backup(root/'backups')
             backup=next((root/'backups').iterdir())
             Path('data').rename('previous-data')
-            with patch('builtins.print'):ops.import_data(backup,include_control=True)
-            with sqlite3.connect('data/news.sqlite3') as db:
-                self.assertEqual(db.execute('SELECT first_seen FROM news').fetchone()[0],first)
-                self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+            conn=db.raw_connect()
+            try:
+                conn.execute(SQL('DROP SCHEMA {} CASCADE').format(Identifier(db.schema())));conn.commit()
+            finally:conn.close()
+            db._ready.clear()
+            with patch('builtins.print'):ops.restore(backup)
+            with db.connect() as conn:self.assertEqual(conn.execute('SELECT first_seen FROM news').fetchone()['first_seen'],first)
             self.assertEqual(Path('data/feed-snapshot.json').stat().st_mtime,snapshots)
             self.assertEqual(ServiceState().status()['collections_succeeded'],1)
