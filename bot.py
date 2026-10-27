@@ -148,8 +148,8 @@ def reject(p, cfg, now, max_age_hours=None):
     return None
 
 
-def select(posts, cfg, now, max_age_hours=None, key_fn=None):
-    posts,_=prepare_cloud_posts(posts,cfg,now,max_age_hours if max_age_hours is not None else 8760)
+def select(posts, cfg, now, max_age_hours=None, key_fn=None, cloud_prepared=False, selected=None):
+    if not cloud_prepared:posts,_=prepare_cloud_posts(posts,cfg,now,max_age_hours if max_age_hours is not None else 8760)
     key_fn = key_fn or keys
     reasons = Counter()
     accepted = []
@@ -163,6 +163,7 @@ def select(posts, cfg, now, max_age_hours=None, key_fn=None):
     groups = []
     for p in accepted:
         ks = key_fn(p)
+        if selected is not None:selected.append((p,set(ks)))
         members = [p]
         remaining = []
         for group_keys, group_posts in groups:

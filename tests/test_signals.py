@@ -116,6 +116,9 @@ class Signals(unittest.TestCase):
         categories,metrics=signals.ranking_metadata([model])
         self.assertEqual(categories,['models']);self.assertEqual(metrics['models']['kind'],'likes')
         self.assertEqual(metrics['models']['value'],0)
+        found=signals.platform_metric(model)
+        self.assertEqual((found[0][1],found[1]),('likes',0))
+        self.assertEqual(signals.popularity(model,{found[0]:[0]*10})[0],0)
 
     def test_category_collection_shows_model_card_instead_of_linking_newsletter(self):
         model=post(id='model',source_id='hf_models',source_name='Hugging Face Models',category='model',content_kind='model',
@@ -142,12 +145,13 @@ class Signals(unittest.TestCase):
         for x in parts:self.assertTrue(0<=x['points']<=x['max'])
 
     def test_freshness_decays_and_real_hn_points_are_used(self):
-        p=post();fresh=signals.score(p,[p],NOW)[0];old=signals.score(dict(p,created_utc=NOW-48*3600),[p],NOW)[0]
-        self.assertGreater(fresh,old)
-        hn=post(source_id='hn',selftext='Article URL: https://example.com\nPoints: 233\n# Comments: 75')
+        p=post();old=post(created_utc=NOW-48*3600)
+        fresh=signals.score(p,[p],NOW)[0];older=signals.score(old,[old],NOW)[0]
+        self.assertGreater(fresh,older)
+        hn=post(source_id='hn',selftext='Article URL: https://example.com\nPoints: 233\nComments: 75')
         self.assertEqual(signals.raw_points(hn),233)
         attention=next(x for x in signals.score(hn,[hn],NOW)[1] if x['id']=='attention')
-        self.assertGreater(attention['points'],0);self.assertEqual(attention['channels'][0]['channel'],'native')
+        self.assertGreater(attention['points'],0);self.assertEqual(attention['channels'][0]['channel'],'hn_points')
 
     def test_popularity_is_a_percentile_within_the_source(self):
         repo=lambda i,stars:post(id=f'g{i}',source_id='github_trending',source_name='GitHub Trending',category='repository',
@@ -175,6 +179,20 @@ class Signals(unittest.TestCase):
         baseline=signals.popularity_baseline(weights+[article],NOW,CFG)
         _,parts,_=signals.score(article,[article],NOW,CFG,baseline=baseline)
         self.assertGreater(digest.momentum(dict(components=parts)),9)
+
+    def test_trending_measurement_raises_momentum_and_listing_position_is_discounted(self):
+        article=post(score=None)
+        weights=[post(id=f'w{i}',title='Qwen benchmark '+str(i),selftext='',links=[]) for i in range(12)]
+        baseline=signals.popularity_baseline(weights+[article],NOW,CFG)
+        _,empty,_=signals.score(article,[article],NOW,CFG,baseline=baseline)
+        readings={'example.com/release':{'hn_points':1}}
+        _,measured,_=signals.score(article,[article],NOW,CFG,baseline=baseline,readings=readings)
+        before=digest.momentum(dict(components=empty));after=digest.momentum(dict(components=measured))
+        self.assertGreater(next(c for c in measured if c['id']=='attention')['points'],0)
+        self.assertGreater(after,before)
+        top=post(source='rss',subreddit='LocalLLaMA',feed_rank=0)
+        attention=next(c for c in signals.score(top,[top],NOW,CFG)[1] if c['id']=='attention')
+        self.assertEqual(attention['channels'][0]['share'],0.4)
 
     def test_trending_now_limits_one_source_in_the_top(self):
         item=lambda i,source,points:dict(id=str(i),source_id=source,score=points,published_at=NOW,
@@ -219,6 +237,16 @@ class Signals(unittest.TestCase):
         paper=post(content_kind='paper',date_kind='trend',category='paper',source_id='hf_papers',filter_mode='all',
                    original_published_at=NOW-400*86400,created_utc=NOW-600)
         self.assertEqual(signals.build_items([paper],CFG,NOW)[0]['news_at'],NOW-400*86400)
+
+    def test_story_time_uses_earliest_merged_member(self):
+        early=post(id='early',created_utc=NOW-20*3600,url='https://example.com/story',article_url='https://example.com/story',selftext='')
+        late=post(id='late',created_utc=NOW-2*3600,url='https://example.com/story',article_url='https://example.com/story',
+                  source_id='openai',source_name='OpenAI',category='lab',selftext='The official longer announcement')
+        items=signals.build_items([late,early],CFG,NOW)
+        self.assertEqual(len(items),1)
+        self.assertEqual(items[0]['news_at'],NOW-20*3600)
+        freshness=next(c for c in items[0]['components'] if c['id']=='freshness')
+        self.assertEqual(freshness['points'],14.0)
 
     def test_model_relevance_and_velocity_popularity(self):
         known=post(content_kind='model',date_kind='trend',title='Qwen/Qwen3.8-27B',provider_trending_score=1000,
@@ -464,8 +492,10 @@ class Signals(unittest.TestCase):
     def test_category_rankings_share_the_story_attention(self):
         row=lambda points,score:dict(id='x',score=score,published_at=NOW,components=[dict(id='attention',points=points,momentum=points),
                                                                                      dict(id='freshness',points=10)])
-        [shared]=signals.share_attention([row(4.3,40)],[row(25,60.7)])
+        overall=row(25,60.7)|dict(discussions=[dict(id='thread',news_at=NOW,momentum=20)])
+        [shared]=signals.share_attention([row(4.3,40)],[overall])
         self.assertEqual((shared['score'],shared['components'][0]['momentum']),(60.7,25))
+        self.assertEqual(shared['discussions'],overall['discussions'])
 
     def test_official_posts_rank_at_least_as_tools_and_launches_higher(self):
         lab=lambda title,**extra:post(**dict(title=title,source_id='openai',source_name='OpenAI News',category='lab',filter_mode='all',
@@ -526,6 +556,14 @@ class Signals(unittest.TestCase):
         edge=post(id='edge',created_utc=NOW-signals.MERGE_WINDOW)
         self.assertEqual(signals.merge_similar([(p,[p],{}) for p in (edge,new)]),[[0,1]])
 
+    def test_story_matching_skips_cosine_without_possible_shared_evidence(self):
+        a=post(title='Alpha release announced',selftext='',links=[])
+        b=post(id='two',title='Beta update available',selftext='',links=[])
+        index=signals.StoryIndex([a,b])
+        with patch.object(index,'compare',side_effect=AssertionError('Cosine was computed')):
+            self.assertFalse(index.same_story(a,b,merge=True))
+            self.assertFalse(index.same_story(a,b,merge=False))
+
     def test_groups_preserve_sources_and_exclude_removed_sources(self):
         p=post();q=post(id='two',source_id='openai',source_name='OpenAI News',category='lab',article_url='https://openai.com/news/example')
         removed=post(id='habr',source_id='habr',links=[],article_url='https://habr.com/test')
@@ -551,6 +589,16 @@ class Signals(unittest.TestCase):
         dashboard.archive_posts([first]);dashboard.archive_posts([second]);rows=dashboard.archive_posts([dict(first,selftext='Updated')])
         self.assertEqual([row['id'] for row in rows],['one','two'])
 
+    def test_daily_story_history_keeps_latest_peak_and_average_inputs(self):
+        item=signals.build_items([post()],CFG,NOW)[0]
+        attention=next(c for c in item['components'] if c['id']=='attention')
+        attention['points']=10;dashboard.record_daily([item],NOW)
+        attention['points']=4;dashboard.record_daily([item],NOW+60)
+        import db
+        with db.connect() as conn:row=conn.execute('SELECT * FROM story_daily').fetchone()
+        self.assertEqual((row['samples'],row['attention'],row['peak'],row['total']),(2,4,10,14))
+        self.assertEqual(row['day'],int(NOW//86400))
+
     def test_rss_is_valid_escaped_and_has_stable_guid_without_fake_metrics(self):
         item=signals.build_items([post(title='Qwen release <script>& benchmark')],CFG,NOW)[0]
         data=dict(generated_at=NOW,items=[item],scoring_version='editorial-v1')
@@ -562,6 +610,16 @@ class Signals(unittest.TestCase):
         self.assertIsNone(entry.find('{urn:ai-signal:feed:1}raw_score'))
         self.assertIsNotNone(entry.find('{urn:ai-signal:feed:1}editorial_score'))
         with self.assertRaises(ValueError):dashboard.rss(data,'bad')
+
+    def test_rss_uses_period_ranking(self):
+        new=signals.build_items([post(id='new',title='New story',created_utc=NOW-3600,article_url='https://new.example/story')],CFG,NOW)[0]
+        old=signals.build_items([post(id='old',title='Old story',created_utc=NOW-5*86400,article_url='https://old.example/story')],CFG,NOW)[0]
+        new['score']=80;next(c for c in new['components'] if c['id']=='freshness')['points']=20
+        old['score']=70;next(c for c in old['components'] if c['id']=='freshness')['points']=0
+        data=dict(generated_at=NOW,items=[new,old],scoring_version='editorial-v1')
+        with patch('dashboard.time.time',return_value=NOW):raw=dashboard.rss(data,'week')
+        titles=[node.findtext('title') for node in ET.fromstring(raw).findall('./channel/item')]
+        self.assertEqual(titles,['Old story','New story'])
 
     def test_year_window_keeps_history_day_window_excludes_old_items(self):
         p=post(created_utc=NOW-100*3600)

@@ -99,7 +99,7 @@ def restore(source):
     Path('data').mkdir(exist_ok=True)
     db.init_schema()
     with db.connect() as conn:
-        tables=('news','responses','hosts','meta','jobs','source_schedule','readings','checks','vectors','deliveries','aliases')
+        tables=('news','responses','hosts','meta','jobs','source_schedule','readings','story_daily','checks','vectors','deliveries','aliases')
         if any(conn.execute('SELECT count(*) AS n FROM '+table).fetchone()['n'] for table in tables):
             raise RuntimeError('Restore requires an empty database')
     subprocess.run(['pg_restore','--dbname',db.settings()['dbname'],'--clean','--if-exists','--exit-on-error',

@@ -66,9 +66,14 @@ class SourceSchedule:
                            (url,name,json.dumps(batch,ensure_ascii=False),json.dumps(status,ensure_ascii=False),due,status.get('checked_at') or 0))
         self.targets=targets;self.known=known;self.policy=policy;self.signature=signature
 
-    def rows(self):
+    def rows(self,full=True):
+        columns='*' if full else 'url,next_at'
         with db.connect() as conn:
-            return {row['url']:dict(row) for row in conn.execute('SELECT * FROM source_schedule')}
+            return {row['url']:dict(row) for row in conn.execute('SELECT '+columns+' FROM source_schedule')}
+
+    def row(self,url):
+        with db.connect() as conn:
+            return conn.execute('SELECT * FROM source_schedule WHERE url=%s',(url,)).fetchone()
 
     def pacing(self):
         urls=[url for _,url,_ in self.targets]
@@ -80,7 +85,7 @@ class SourceSchedule:
         return max(row['next_at'],not_before,next_request)
 
     def next_due(self,cfg):
-        self.sync(cfg);rows=self.rows();not_before,next_request=self.pacing()
+        self.sync(cfg);rows=self.rows(full=False);not_before,next_request=self.pacing()
         return min((self.due(rows[url],not_before[url],next_request) for _,url,_ in self.targets),default=time.time()+60)
 
     def snapshot(self,changed=False):
@@ -91,11 +96,11 @@ class SourceSchedule:
         return dict(posts=posts,statuses=statuses,changed=changed,collected_at=last)
 
     def collect(self,cfg,stop_event):
-        self.sync(cfg);rows=self.rows();not_before,next_request=self.pacing();now=time.time()
+        self.sync(cfg);rows=self.rows(full=False);not_before,next_request=self.pacing();now=time.time()
         ready=[target for target in self.targets if self.due(rows[target[1]],not_before[target[1]],next_request)<=now]
         if not ready:return self.snapshot()
         name,url,source=min(ready,key=lambda target:rows[target[1]]['next_at'])
-        row=rows[url];batch=json.loads(row['payload']);last_success=row['last_success']
+        row=self.row(url);batch=json.loads(row['payload']);last_success=row['last_success']
         LOG.info('source_started name=%s',name)
         try:
             if stop_event.is_set():raise RuntimeError('Collection cancelled')

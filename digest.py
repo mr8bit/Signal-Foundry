@@ -21,7 +21,7 @@ SORTS=['trending','day','week','month','year','now']
 WINDOWS={'trending':(24,'momentum'),'day':(24,'editorial'),'week':(168,'significance'),'month':(720,'significance'),
          'year':(8760,'significance'),'now':(48,'editorial')}
 MEASURES={'momentum':('momentum',25),'editorial':('score',100),'significance':('significance',75)}
-PERIOD_NOTES={'trending':'Trending Now: stories from the last 24 hours, ranked by momentum: attention across platform, discussion and reach signals, up to 25, halving over a day of age. A story with no attention signal uses its editorial weight percentile, at most 10. Community threads about a story with its own card fold into that card.',
+PERIOD_NOTES={'trending':'Trending Now: stories from the last 24 hours, ranked by momentum, up to 25, halving over a day of age. Momentum combines an editorial prior (up to 10) with measured attention, so receiving a weak signal never lowers it. Community threads about a story with its own card fold into that card.',
               'day':'The leading stories of the last 24 hours by editorial score, including freshness, up to 100.',
               'week':'The most significant stories of the last seven days. Significance excludes freshness, up to 75.',
               'month':'The most significant stories of the last 30 days, excluding freshness, up to 75.',
@@ -127,7 +127,7 @@ def attention_summary(p):
 
 
 def momentum(p):
-    """Trending Now measure (max 25): the story's attention, or its editorial-weight proxy when it has no signal.
+    """Trending Now measure (max 25): editorial prior plus its remaining share of measured attention.
     Computed in signals.attention_parts and mirrored by web/signal-ranking.js; a Trending Now card with folded
     threads carries their highest momentum (select)."""
     if 'trend_momentum' in p:return p['trend_momentum']
@@ -282,7 +282,7 @@ The page includes static HTML and JavaScript enhancements. The views below use t
 
 - Relevance: 30; freshness: 25; evidence: 15; primary source: 5; attention: 25.
 - Missing metrics remain `null`, not zero. Platform units are kept separate.
-- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points) and reach (independent platforms here, other outlets in Google News within 48 h). Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`, 24 hours) orders by momentum halved per day of age (momentum × 2^(−age/24 h)), and admits models on the Hugging Face trend list created within seven days: momentum is attention, or for a story with no signal its editorial weight percentile (at most 10). Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 24 hours, at the highest faded momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
+- Attention: each channel is a percentile against its own last 7 days. Families: platform (source metric, stars/likes growth per day, HF trendingScore, Substack reactions, comments, most-read lists), discussion (HN points and comments) and reach (independent platforms here, other outlets in Google News within 48 h). Reddit listing positions have half confidence and local coverage alone cannot saturate attention. Each family keeps its best channel; attention = 25 × (1 − Π(1 − share)). JSON `attention` lists every channel with its family, share and note. Trending Now (`sort=trending`, 24 hours) orders by momentum halved per day of age (momentum × 2^(−age/24 h)), and admits models on the Hugging Face trend list created within seven days: momentum combines an editorial prior P (at most 10) with measured attention A as P + (25 − P) × A / 25, so a weak measurement never lowers it. Community threads about a story that has its own card fold into it: the card stays in Trending Now while any thread is from the last 24 hours, at the highest faded momentum among them, and JSON `threads` lists them. In every period, after three stories of one source (all subreddits count as one) further ones compete for the top ten with a fifth of the measure's scale taken off, so lists are not strictly sorted by their measure.
 - Scores help prioritize news; they do not verify claims. Check the original `url`.
 - Periods use the story date: publication, model or paper creation, or first appearance in trends.
 '''

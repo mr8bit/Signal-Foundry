@@ -120,5 +120,33 @@ class Attention(unittest.TestCase):
         self.assertAlmostEqual(discussed['points'],25)
         self.assertEqual(discussed['momentum'],discussed['points'])
 
+    def test_non_finite_readings_are_rejected(self):
+        self.assertEqual(self.store.record([('key','hn_points',float('inf')),('key','comments',float('nan'))],NOW),0)
+        self.assertEqual(self.store.snapshot(NOW),{})
+
+    def test_hn_points_keep_their_scale_after_merging_and_comments_count(self):
+        article=dict(id='a',source='site',source_id='verge',source_name='Verge',category='news',title='A story',
+                     url='https://example.com/story',article_url='https://example.com/story',selftext='',created_utc=NOW)
+        hn=dict(article,id='hn',source_id='hn',source_name='Hacker News',score=300,
+                url='https://news.ycombinator.com/item?id=1',selftext='Points: 300\nComments: 200')
+        readings={'example.com/story':{'hn_points':300,'hn_comments':200}}
+        solo=signals.attention_parts(article,[article],{'example.com'},{},readings,0)
+        thread=signals.attention_parts(hn,[hn],{'hackernews'},{},readings,0)
+        merged=signals.attention_parts(article,[article,hn],{'example.com','hackernews'}, {},readings,0)
+        channel=lambda parts:next(c for c in parts[2] if c['channel']=='hn_points')
+        self.assertEqual(channel(solo)['share'],channel(thread)['share'])
+        self.assertEqual(channel(solo)['share'],channel(merged)['share'])
+        self.assertEqual(channel(merged)['family'],'discussion')
+        self.assertTrue(any(c['channel']=='hn_comments' for c in merged[2]))
+        self.assertGreaterEqual(merged[0],solo[0])
+
+    def test_coverage_alone_cannot_saturate_attention(self):
+        article=dict(id='a',source='site',source_id='verge',source_name='Verge',category='news',title='A story',
+                     url='https://example.com/story',article_url='https://example.com/story',selftext='',created_utc=NOW,score=None)
+        members=[dict(article,id=str(i),source_id=f'source{i}',article_url=f'https://source{i}.com/story') for i in range(4)]
+        points,momentum,channels,note=signals.attention_parts(article,members,{'one','two','three','four'},{},{},0)
+        self.assertEqual(points,15)
+        self.assertEqual(channels[0]['share'],0.6)
+
 
 if __name__=='__main__':unittest.main()

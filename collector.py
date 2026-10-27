@@ -27,8 +27,8 @@ class Collector:
         self.client=client or bot.RedditRSS();self.stop=threading.Event()
         self.schedule=schedule or SourceSchedule(self.state,self.client)
 
-    def publish_snapshot(self):
-        data=dashboard.build()
+    def publish_snapshot(self,posts=None):
+        data=dashboard.build(write=False,posts=posts,history=True)
         manifest=self.publications.publish(data)
         self.state.set('publication',manifest)
         return data
@@ -50,7 +50,7 @@ class Collector:
                 except Exception as exc:
                     LOG.exception('attention_refresh_failed job=%s',job['id']);lookups=dict(error=exc.__class__.__name__)
                 dashboard.record_telemetry('attention',dict(lookups,duration_seconds=time.monotonic()-started))
-                data=self.publish_snapshot()
+                data=self.publish_snapshot(result['posts'])
             else:
                 data=self.publications.load()['data']
             self.state.finish(job['id'])

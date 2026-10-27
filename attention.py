@@ -10,6 +10,7 @@ from collections import defaultdict
 import html
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -64,7 +65,7 @@ class Store:
     def record(self,rows,now=None):
         """Store readings; an unchanged value is written at most hourly so histories stay small."""
         now=time.time() if now is None else now
-        rows=[(k,c,float(v)) for k,c,v in rows if k and isinstance(v,(int,float)) and not isinstance(v,bool) and v>=0]
+        rows=[(k,c,float(v)) for k,c,v in rows if k and isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) and v>=0]
         if not rows:return 0
         with db.connect() as connection:
             pairs=tuple({(key,channel) for key,channel,value in rows})

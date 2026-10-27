@@ -14,6 +14,7 @@ from email.utils import formatdate
 import bot
 import db
 from cloud_news import prepare_cloud_posts
+from presentation import english_post
 import attention
 import embeddings
 from signals import build_items, popularity_baseline, channel_baseline, share_attention, SCORING_VERSION, SIGNAL_CATEGORIES, enterprise_reasons
@@ -46,6 +47,21 @@ def archive_posts(posts,path=None):
         return [json.loads(row['payload'])|{'first_seen':row['first_seen']} for row in connection.execute('SELECT payload,first_seen FROM news ORDER BY position')]
 
 
+def record_daily(items,now):
+    day=int(now//86400)
+    def row(p):
+        points=next(c for c in p['components'] if c['id']=='attention')['points']
+        return p['id'],day,points,points,points,now
+    rows=[row(p) for p in items]
+    if not rows:return
+    with db.connect() as connection:
+        connection.cursor().executemany('''INSERT INTO story_daily (story,day,samples,attention,peak,total,updated)
+            VALUES (%s,%s,1,%s,%s,%s,%s) ON CONFLICT(story,day) DO UPDATE SET
+            samples=story_daily.samples+1,attention=EXCLUDED.attention,peak=GREATEST(story_daily.peak,EXCLUDED.peak),
+            total=story_daily.total+EXCLUDED.total,updated=EXCLUDED.updated''',rows)
+        connection.execute('DELETE FROM story_daily WHERE day<%s',(day-400,))
+
+
 def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):
     now=now or time.time()
     enabled={s['id'] for s in cfg.get('feeds',[]) if s.get('enabled',True)}
@@ -57,7 +73,9 @@ def dataset(posts,cfg,statuses,now=None,readings=None,vectors=None):
     baseline=popularity_baseline(posts,now,cfg)|channel_baseline(readings)
     # Story vectors are only read here; build() embeds new stories before calling dataset.
     vectors=embeddings.Store().load() if vectors is None else vectors
-    common=dict(baseline=baseline,readings=readings,vectors=vectors)
+    posts=[english_post(p) for p in posts]
+    posts=[p for p in posts if p.get('source')!='site' or p.get('source_id') in enabled]
+    common=dict(baseline=baseline,readings=readings,vectors=vectors,normalized=True)
     items=build_items(posts,cfg,now,**common)
     # Rank each collection independently: a newsletter linking many models must
     # not replace model cards through the mixed feed's cross-source deduplication.
@@ -85,8 +103,8 @@ def rss(data,period='day',base_url='http://127.0.0.1:8765',limit=100):
         ET.SubElement(channel,key).text=value
     ET.SubElement(channel,'{'+meta+'}scoring_version').text=data['scoring_version']
     now=time.time()
-    # Same rule as the dashboard tabs: the period counts from when a story became news, not its last trend sighting.
-    items=[p for p in data['items'] if 0<=now-p.get('news_at',p['published_at'])<=PERIODS[period]*3600][:limit]
+    import digest
+    items=digest.ranked(data,period=period,now=now)[:limit]
     for rank,p in enumerate(items,1):
         item=ET.SubElement(channel,'item')
         for key,value in [('title',p['title']),('link',p['url']),('pubDate',formatdate(p['published_at'],usegmt=True)),('description',p['summary'])]:
@@ -139,9 +157,9 @@ def write_dashboard(data):
     write_atomic('data/signals.md',digest.markdown(data))
 
 
-def build(snapshot='data/feed-snapshot.json',limit=None):
+def build(snapshot='data/feed-snapshot.json',limit=None,write=True,posts=None,history=False):
     cfg=json.loads(Path('config.json').read_text())
-    posts=json.loads(Path(snapshot).read_text())
+    if posts is None:posts=json.loads(Path(snapshot).read_text())
     # Keep previously enriched article text; refresh is a separate explicit collection step.
     posts=archive_posts(posts)
     # Only stories the filters keep are compared; general feeds bring many more (CNews: 28 of 200 are about AI).
@@ -154,11 +172,12 @@ def build(snapshot='data/feed-snapshot.json',limit=None):
     statuses=json.loads(status_path.read_text()) if status_path.exists() else []
     ranked=time.monotonic()
     data=dataset(posts,cfg,statuses)
+    if history:record_daily(data['items'],data['generated_at'])
     record_telemetry('build',dict(duration_seconds=time.monotonic()-started,ranking_seconds=time.monotonic()-ranked,
                                   archived=len(posts),items=len(data['items'])))
     data['collected_at']=Path(snapshot).stat().st_mtime
     if limit is not None: data['items']=data['items'][:limit]
-    write_dashboard(data)
+    if write:write_dashboard(data)
     return data
 
 

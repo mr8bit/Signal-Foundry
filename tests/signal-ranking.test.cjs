@@ -50,7 +50,7 @@ const FIXTURE=[
   {id:'august-model',score:90,published_at:NOW-1*H,news_at:NOW-55*D,date_kind:'trend',components:parts(10,0,0)},
   {id:'big-last-week',score:60,published_at:NOW-5*D,news_at:NOW-5*D,components:parts(10,15,0.4)},
   {id:'small-yesterday',score:50,published_at:NOW-20*H,news_at:NOW-20*H,components:parts(0,0,14)}];
-const ids=(period,order)=>ranking.rank(FIXTURE.filter(x=>ranking.inPeriod(x,period,NOW)),'all',order??ranking.PERIODS[period].order).map(x=>x.id);
+const ids=(period,order)=>ranking.rank(ranking.select(FIXTURE,period,NOW),'all',order??ranking.PERIODS[period].order).map(x=>x.id);
 test('tabs select by when a story became news and sort by their own measure',()=>{
   assert.deepEqual(ids('trending'),['hot','afternoon','quiet-new','small-yesterday']);
   assert.deepEqual(ids('day'),['quiet-new','afternoon','small-yesterday','hot']);
@@ -58,7 +58,8 @@ test('tabs select by when a story became news and sort by their own measure',()=
   assert.ok(ranking.inPeriod(FIXTURE[3],'year',NOW)&&!ranking.inPeriod(FIXTURE[3],'month',NOW));
 });
 test('the card headline is the measure the tab sorts by',()=>{
-  assert.deepEqual(ranking.headline(FIXTURE[0],'trending'),{name:'Momentum',max:25,order:'momentum',value:21});
+  const hot=ranking.select(FIXTURE,'trending',NOW).find(x=>x.id==='hot');
+  assert.deepEqual(ranking.headline(hot,'trending'),{name:'Momentum',max:25,order:'momentum',value:19.3});
   assert.deepEqual(ranking.headline(FIXTURE[0],'day'),{name:'Score',max:100,order:'editorial',value:40});
   assert.deepEqual(ranking.headline(FIXTURE[4],'month'),{name:'Significance',max:75,order:'significance',value:59.6});
 });

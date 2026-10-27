@@ -108,7 +108,7 @@ Categories include Overall, Models, GitHub, Research papers, Publications, Cloud
 
 | Period | Window | Ordering and headline measure |
 |---|---|---|
-| Trending Now (default) | 24 hours | Momentum, up to 25: the story's attention (editorial-weight proxy, at most 10, when it has no attention signal), halving over a day of age |
+| Trending Now (default) | 24 hours | Momentum, up to 25: an editorial prior combined with measured attention, halving over a day of age |
 | Day | 24 hours | Editorial score, up to 100, including freshness |
 | Week / Month / Year | 7 / 30 / 365 days | Significance, up to 75: editorial score without freshness |
 
@@ -116,7 +116,7 @@ Periods use `news_at`: publication time for stories, creation/publication for HF
 
 Platform sorting is available outside Trending Now: GitHub daily stars, HF trendingScore followed by likes when trendingScore is missing, and paper upvotes. These metric groups are not mixed. The selected period filters entries without changing the measurement window. In Day, GitHub/HF columns retain provider order; other periods use their own ranking measure.
 
-### Editorial score: `editorial-v6`
+### Editorial score: `editorial-v7`
 
 | Component | Maximum | Rule |
 |---|---:|---|
@@ -140,15 +140,15 @@ Attention (0–25) joins every signal of interest in a story. Each channel is ra
 
 | Family | Channels | Where the data comes from |
 |---|---|---|
-| Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, HN/Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in PostgreSQL, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
-| Discussion | HN points for the story's URL | hnrss items and HN Algolia lookups |
+| Platform | The source's own metric (GitHub daily stars, HF trendingScore or likes, paper upvotes, Reddit points, position in Reddit's `/top` listing); GitHub stars, HF likes and Replicate runs **growth per day**; HF trendingScore; Substack reactions + restacks; comments; place in an outlet's most-read list | Collected posts (stored as a history in PostgreSQL, so totals become growth), HF API, GitHub API, Substack API, `slash:comments`/`thr:total` in feeds, outlets' most-read lists |
+| Discussion | HN points and comments for the story's URL | hnrss items and HN Algolia lookups |
 | Reach | Independent platforms in our sources; other outlets reporting the same headline in Google News within 48 hours (at least three shared headline words and two fifths of the shorter headline; the article's own outlet excluded) | Story grouping and Google News RSS |
 
-Each family keeps its best channel and the families combine as `25 × (1 − Π(1 − share))`: one strong signal counts fully, several add up, the total never exceeds 25. The score breakdown and the JSON `attention` field list every channel with its family, share and note.
+Each family keeps its best channel and the families combine as `25 × (1 − Π(1 − share))`: one strong signal counts fully, several add up, the total never exceeds 25. Reddit listing positions have half confidence because position is not measured engagement. Coverage from our sources alone is capped at 0.6 share (15 attention), so four reprints cannot saturate the component. The score breakdown and the JSON `attention` field list every channel with its family, share and note.
 
 The collector records readings after each collection and spends a time budget (`attention.budget_seconds`) on lookups, one kind at a time: most-read lists, Substack, Google News, HF, GitHub, then HN, each with its own TTL and per-cycle limit. A story younger than 12 hours (`attention.fresh_hours`) is checked again in Google News after 45 minutes and on HN after 30 instead of 3 and 2 hours: found minutes after publication it has no other outlets or thread yet, and it can only trend while it is fresh. The budget is 60 seconds per collection job, so lookups never hold up source polling; collection jobs run continuously and a backlog drains over several of them. Russian articles are not looked up on HN. Builds only read the store. `GITHUB_TOKEN` (no scopes) raises the GitHub API limit from 60 to 5,000 requests per hour; without it few repositories are looked up per cycle. Pages for most-read lists are set in `attention.most_read`; Substack sources in `attention.substack_sources`.
 
-Trending Now momentum is the story's attention. A story with no attention signal at all is ranked by the percentile of its editorial weight (relevance + evidence + primary source, up to 50) among recent publications, at most 10; this proxy never enters the editorial score.
+Trending Now combines an editorial prior `P` (the percentile of relevance + evidence + primary source among recent publications, at most 10) with measured attention `A`: `P + (25 − P) × A / 25`. With no signal it equals the prior; a weak positive measurement can only increase momentum. The prior never enters the editorial score.
 
 Trending Now ranks by faded momentum: momentum × 2^(−age / 24 h), where age counts from when the story became news. A strong story from last night therefore gives way gradually to today's instead of vanishing at a cutoff. A model counts from its creation, so a model trending on Hugging Face is shown while it is on the trend list (seen within the window) and less than seven days old, faded as if it were half a day old; older models trending again are not news.
 
@@ -156,7 +156,7 @@ Community threads about a story that has its own card (related coverage of a lab
 
 A story without attention signals gets 0 attention; nothing is invented. Multiple subreddits count as one platform; Google AI and DeepMind also count as one. Coverage does not verify claims or imply independent fact-checking.
 
-Growth per day is measured only from stored readings at least six hours apart within 48 hours; a single snapshot never claims a rate. Daily GitHub stars from Trending are used as supplied. Descriptions are source excerpts or metadata, not AI-written summaries. Historical coverage depends on how long the archive has been collecting.
+Growth per day is measured only from stored readings at least six hours apart within 48 hours; a single snapshot never claims a rate. Daily GitHub stars from Trending are used as supplied. Descriptions are source excerpts or metadata, not AI-written summaries. Historical coverage depends on how long the archive has been collecting. The collector also stores compact per-story daily rollups (latest, peak, sample count and sum) for 400 days, building the basis for period-aware Week/Month/Year attention without retaining a year of raw lookups.
 
 ### Deduplication and related coverage
 
@@ -306,7 +306,7 @@ Restart the publisher after resolving the record. Keep the database across upgra
 
 `/api/signals` and `/signals.md` accept `sort=trending|day|week|month|year|now`, `category=all|models|repos|papers|media|cloud|enterprise`, and `limit=1..100` (default 20). The legacy API default is `now`, a 48-hour editorial ranking; the dashboard defaults to Trending Now. Invalid parameters return 400.
 
-RSS uses the same story-date filtering and exports source, rank, editorial score, coverage, optional raw points, date kind, original date, metrics and cloud availability in the `urn:ai-signal:feed:1` namespace. The HTML includes top-four signals and 40 feed entries, falling back to Day/Week when Trending Now is empty, plus a JSON-LD top-ten list. Link headers advertise agent formats.
+RSS uses the same story-date filtering, period ranking and source diversification as the dashboard and exports source, rank, editorial score, coverage, optional raw points, date kind, original date, metrics and cloud availability in the `urn:ai-signal:feed:1` namespace. The HTML includes top-four signals and 40 feed entries, falling back to Day/Week when Trending Now is empty, plus a JSON-LD top-ten list. Link headers advertise agent formats.
 
 Management requires `Authorization: Bearer <SIGNAL_ADMIN_TOKEN>`. Do not put it in a URL. Browser Origin must match `SIGNAL_PUBLIC_URL`. The dashboard stores a supplied key only in the current tab's session storage; the server does not embed it in public HTML or APIs.
 
