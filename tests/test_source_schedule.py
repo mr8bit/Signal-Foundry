@@ -101,3 +101,18 @@ class Scheduling(unittest.TestCase):
             try:self.client.http.get('https://same.test/b')
             except RuntimeError:pass
         self.assertGreaterEqual(self.schedule.next_due(self.cfg),17200)
+
+    def test_source_diagnostics_reads_postgres_cache_and_host_state(self):
+        import time
+        import source_diagnostics
+        retry=time.time()+60
+        with self.client.http.connect() as conn:
+            conn.execute('INSERT INTO hosts(host,retry_at,error,status) VALUES (%s,%s,%s,%s)',
+                         ('same.test',retry,'limited',429))
+        [result]=source_diagnostics.diagnose(self.cfg,source='same.test/a')
+        self.assertEqual(result['http_status'],429)
+        self.assertEqual(result['host_http_status'],429)
+        self.assertEqual(result['cache_error'],'limited')
+        self.assertEqual(result['retry_at'],retry)
+        self.assertFalse(result['has_cached_body'])
+        self.assertEqual(result['cached_bytes'],0)

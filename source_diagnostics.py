@@ -28,7 +28,7 @@ def diagnose(cfg,probe=False,source=None,timeout=40):
             result['elapsed_seconds']=round(time.monotonic()-started,3)
         row=client.http.read(url) or {}
         with client.http.connect() as db:
-            host=db.execute('SELECT * FROM hosts WHERE host=?',((urlsplit(url).hostname or '').lower(),)).fetchone()
+            host=db.execute('SELECT * FROM hosts WHERE host=%s',((urlsplit(url).hostname or '').lower(),)).fetchone()
         retry=max(row.get('retry_at',0),host['retry_at'] if host else 0)
         active_host=bool(host and host['retry_at']>time.time())
         result.update(http_status=(row.get('status') if row.get('error') else None) or

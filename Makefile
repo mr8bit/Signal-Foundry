@@ -16,6 +16,7 @@ check-python:
 	mapping=$$(docker port $$name 5432/tcp); \
 	docker run --rm --network host --read-only --tmpfs /tmp:rw,mode=1777 \
 	  --tmpfs /app/data:rw,uid=10001,gid=10001,mode=0700 -v "$$PWD/tests:/app/tests:ro" \
+	  -v "$$PWD/deploy:/app/deploy:ro" \
 	  -v "$$PWD/README.md:/app/README.md:ro" \
 	  -e PGHOST=127.0.0.1 -e PGPORT=$${mapping##*:} -e PGDATABASE=signal -e PGUSER=signal -e PGPASSWORD=test \
 	  signal-foundry:test python -m unittest discover -s tests -q

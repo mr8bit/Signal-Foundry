@@ -219,7 +219,7 @@ Twelve feeds cover Google Cloud AI, Gemini Enterprise and Vertex AI release note
 
 Third-party model availability on Bedrock, Vertex, Foundry or AI Gateway becomes an **Available on** link on the matching model story. Standalone cloud stories require first-party models, agent platforms, a quantified price reduction of at least 20%, or new AI hardware. Customer stories, tutorials, webinars, new regions, GovCloud and compliance announcements are excluded. Source-specific gates include GA-only Gemini Enterprise notes, Launched Azure updates, and stable `ai@N.0.0` SDK majors. Unmatched availability announcements remain pending instead of becoming separate stories. Existing Telegram messages are not edited automatically.
 
-Detailed implementation notes: [cloud](CLOUD_NEWS.md), [ranking](SIGNAL_RANKING.md), [collection](COLLECTION.md) and [source diagnostics](SOURCE_STATUS.md).
+Detailed implementation notes: [cloud](CLOUD_NEWS.md), [ranking](SIGNAL_RANKING.md) and [collection](COLLECTION.md).
 
 ## Collection, caching and failures
 
