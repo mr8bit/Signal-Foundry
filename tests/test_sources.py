@@ -87,6 +87,20 @@ class Sources(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             parse_newsroom(b'<html>Changed</html>',source)
 
+    def test_anthropic_newsroom_combines_split_table_rows(self):
+        data=b'''<ul><li data-listing-row="one"><div><a href="/news/s1-sec"><h3>Anthropic files S-1 with the SEC</h3></a></div>
+        <div><a href="/news/announcements">Announcements</a></div><div><time>Oct 26, 2026</time></div>
+        <div><a href="/news/announcements">Announcements</a></div><a href="/news/s1-sec"><h3>Anthropic files S-1 with the SEC</h3></a></li>
+        <li data-listing-row="two"><a href="/news/claude-haiku-5-5"><h3>Claude Haiku 5.5</h3></a>
+        <a href="/news/product">Product</a><time>Oct 7, 2026</time></li></ul>'''
+        source=dict(SOURCE,id='anthropic',url='https://www.anthropic.com/news')
+        posts=parse_newsroom(data,source)
+        self.assertEqual(len(posts),2)
+        self.assertEqual(posts[0]['title'],'Anthropic files S-1 with the SEC')
+        self.assertEqual(posts[0]['url'],'https://www.anthropic.com/news/s1-sec')
+        self.assertEqual(posts[0]['created_utc'],datetime(2026,10,26,tzinfo=timezone.utc).timestamp())
+        self.assertEqual(posts[1]['title'],'Claude Haiku 5.5')
+
     def test_source_failure_does_not_stop_collection(self):
         cfg=copy.deepcopy(CFG)
         cfg['rss_groups']=[]

@@ -148,9 +148,25 @@ class Newsroom(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.items, self.current, self.stack = [], None, []
+        self.row_items, self.row_date, self.in_row_time = None, None, False
+
+    def finish_row(self):
+        dated = next((item for item in self.row_items if ''.join(item['date']).strip()), None)
+        titled = next((item for item in self.row_items if ''.join(item['title']).strip()), None)
+        date = dated['date'] if dated else self.row_date
+        if titled and date and ''.join(date).strip():
+            self.items.append(dict(titled, date=date))
+        self.row_items, self.row_date, self.in_row_time = None, None, False
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == 'li' and attrs.get('data-listing-row'):
+            if self.row_items is not None:
+                self.finish_row()
+            self.row_items, self.row_date, self.in_row_time = [], None, False
+        if tag == 'time' and self.row_items is not None and self.current is None:
+            self.row_date = [attrs.get('datetime', '')]
+            self.in_row_time = True
         if tag == 'a':
             href = attrs.get('href', '')
             if href.startswith(('/news/', '/claude-')):
@@ -167,12 +183,18 @@ class Newsroom(HTMLParser):
             field = next((field for _, field in reversed(self.stack) if field), '')
             if field:
                 self.current[field].append(data)
+        elif self.in_row_time:
+            self.row_date.append(data)
 
     def handle_endtag(self, tag):
+        if tag == 'time':
+            self.in_row_time = False
+        if tag == 'li' and self.row_items is not None:
+            self.finish_row()
         if self.current is None:
             return
         if tag == 'a':
-            self.items.append(self.current)
+            (self.row_items if self.row_items is not None else self.items).append(self.current)
             self.current = None
             self.stack = []
         else:
